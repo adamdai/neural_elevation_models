@@ -1,0 +1,13 @@
+# python=3.8
+
+numpy
+scipy 
+matplotlib
+jupyter
+ipykernel
+ipympl
+gpy
+plotly
+pandas
+opencv-python
+# pytorch (see readme for installation)
