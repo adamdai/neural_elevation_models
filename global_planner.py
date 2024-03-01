@@ -24,9 +24,6 @@ class GlobalPlanner(AStar):
 
         self.path = None
 
-        self.max_costval = 0
-        self.cmap_resolution = 2  # m
-
 
     def neighbors(self, node):
         x, y = node
@@ -47,10 +44,10 @@ class GlobalPlanner(AStar):
         Start and goal are in image coordinates
         
         """
-        path = list(self.astar(start, goal))
+        path = list(self.astar(start, goal))  # path is in image coordinates
         dt = np.dtype('int32','int32')
-        path = np.array(path, dtype=dt)
-        self.path = path
+        path = np.array(path, dtype=dt)[:,[1,0]]  # flip x and y to get back to spatial coordinates
+        self.path = path  
         return path
     
 

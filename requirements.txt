@@ -6,7 +6,6 @@ matplotlib
 jupyter
 ipykernel
 ipympl
-gpy
 plotly
 pandas
 opencv-python
