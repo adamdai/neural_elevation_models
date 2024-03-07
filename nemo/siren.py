@@ -9,6 +9,8 @@ import torch.nn as nn
 import numpy as np
 from collections import OrderedDict
 
+from nemo.util import gradient
+
 
 class SineLayer(nn.Module):
     # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of omega_0.
@@ -81,7 +83,13 @@ class Siren(nn.Module):
     #     output = self.net(coords)
     #     return output, coords     
     def forward(self, coords):
-        return self.net(coords)     
+        return self.net(coords)
+
+    def forward_with_grad(self, coords):
+        coords = coords.clone().detach().requires_grad_(True) # allows to take derivative w.r.t. input
+        output = self.net(coords)
+        grad = gradient(output, coords)
+        return output, grad
 
     def forward_with_activations(self, coords, retain_grad=False):
         '''Returns not only model output, but also intermediate activations.
