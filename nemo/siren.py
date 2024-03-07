@@ -76,10 +76,12 @@ class Siren(nn.Module):
         
         self.net = nn.Sequential(*self.net)
     
+    # def forward(self, coords):
+    #     coords = coords.clone().detach().requires_grad_(True) # allows to take derivative w.r.t. input
+    #     output = self.net(coords)
+    #     return output, coords     
     def forward(self, coords):
-        coords = coords.clone().detach().requires_grad_(True) # allows to take derivative w.r.t. input
-        output = self.net(coords)
-        return output, coords        
+        return self.net(coords)     
 
     def forward_with_activations(self, coords, retain_grad=False):
         '''Returns not only model output, but also intermediate activations.
