@@ -4,7 +4,7 @@
 
 import numpy as np
 
-from astar import AStar
+from nemo.astar import AStar
 
 
 
