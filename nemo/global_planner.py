@@ -68,7 +68,7 @@ class GlobalPlanner(AStar):
 
 class GlobalPlanner2(AStar):
 
-    def __init__(self, costmat):
+    def __init__(self, heightmat):
         """
         Parameters
         ----------
@@ -76,11 +76,9 @@ class GlobalPlanner2(AStar):
 
         
         """
-        self.costmat = costmat
-        self.costmat_dx = np.gradient(self.costmat, axis=0)
-        self.costmat_dy = np.gradient(self.costmat, axis=1)
-        self.width = self.costmat.shape[0]
-        self.height = self.costmat.shape[1]
+        self.heightmat = heightmat
+        self.width = self.heightmat.shape[0]
+        self.height = self.heightmat.shape[1]
 
         self.path = None
 
@@ -91,7 +89,7 @@ class GlobalPlanner2(AStar):
                 if 0 <= nx < self.width and 0 <= ny < self.height]
 
     def distance_between(self, node1, node2):
-        return np.abs(self.costmat[node2] - self.costmat[node1]) 
+        return np.abs(self.heightmat[node2] - self.heightmat[node1]) 
     
     def heuristic_cost_estimate(self, node1, node2):
         """Straight line distance"""
