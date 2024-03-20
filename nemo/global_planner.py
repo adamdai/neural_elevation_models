@@ -93,7 +93,7 @@ class GlobalPlanner2(AStar):
                 if 0 <= nx < self.width and 0 <= ny < self.height]
 
     def distance_between(self, node1, node2):
-        return (self.heightmat[node2] - self.heightmat[node1])**4
+        return (self.heightmat[node2] - self.heightmat[node1])**2
     
     def heuristic_cost_estimate(self, node1, node2):
         """Straight line distance"""
