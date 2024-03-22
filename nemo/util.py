@@ -41,6 +41,12 @@ def path_metrics(path):
         height_diff += torch.abs(path_zs[i+1] - path_zs[i])
     print(f'Height delta sum: {height_diff.item()}')
 
+    # Calculate smoothness as jerk
+    jerk = 0
+    for i in range(1, len(path)-1):
+        jerk += torch.norm(path[i+1] - 2*path[i] + path[i-1])
+    print(f'Average jerk: {jerk.item()/len(path)}')
+
 
 
 def parse_colmap_point_cloud(filename):

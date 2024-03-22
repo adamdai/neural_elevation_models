@@ -6,8 +6,9 @@ from nerfstudio.field_components.spatial_distortions import SceneContraction
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+# TODO: should inherit from nn.Module?
 class Nemo:
-    def __init__(self):
+    def __init__(self, encs_pth=None, mlp_pth=None):
         self.encoding = tcnn.Encoding(
             n_input_dims=2,
             encoding_config={
@@ -35,6 +36,9 @@ class Nemo:
 
         self.spatial_distortion = SceneContraction()
 
+        if encs_pth is not None and mlp_pth is not None:
+            self.load_weights(encs_pth, mlp_pth)
+
         # TODO: add xyz scaling
         self.x_scale = None
         self.y_scale = None
@@ -47,7 +51,6 @@ class Nemo:
         self.heightcap_net.load_state_dict(torch.load(mlp_pth))
         self.heightcap_net.to(device)
 
-    
 
     def get_heights(self, positions):
         positions = torch.cat([positions, torch.zeros_like(positions[..., :1])], dim=-1)
