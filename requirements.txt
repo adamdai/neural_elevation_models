@@ -1,5 +1,4 @@
 # python=3.8
---find-links https://download.pytorch.org/whl/torch_stable.html
 
 numpy
 scipy 
@@ -12,5 +11,7 @@ pandas
 opencv-python
 tqdm
 
-torch-2.2.1+cu118
-torchvision-0.17.1+cu118
+# --find-links https://download.pytorch.org/whl/torch_stable.html
+# torch-2.2.1+cu118
+# torchvision-0.17.1+cu118
+# pip install git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
