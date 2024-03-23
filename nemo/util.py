@@ -1,5 +1,7 @@
 import torch
 import numpy as np
+import plotly.graph_objects as go
+import plotly.express as px
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TORCH_PI = torch.tensor(np.pi, device=device)
@@ -14,6 +16,23 @@ def gradient(y, x, grad_outputs=None):
 def wrap_angle_torch(angle):
     """Wrap angle to [-pi, pi] range"""
     return ((angle + TORCH_PI) % (2 * TORCH_PI)) - TORCH_PI
+
+
+##### ------------------- PLOTTING ------------------- #####
+
+def plot_surface(fig, x, y, z, colorscale='Viridis', no_axes=False):
+    fig.add_trace(go.Surface(x=x, y=y, z=z, colorscale=colorscale))
+    fig.update_layout(width=1200, height=900, scene_aspectmode='data')
+    if no_axes:
+        fig.update_layout(scene=dict(xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False)))
+    return fig
+
+
+def plot_path_3d(fig, x, y, z, color='red', markersize=3, linewidth=3):
+    fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='markers+lines', marker=dict(size=markersize, color=color),
+                           line=dict(color=color, width=linewidth)))
+    return fig
+
 
 
 def path_metrics(path):
