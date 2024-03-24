@@ -27,6 +27,12 @@ Install pytorch (https://pytorch.org/get-started/locally/), may need to reboot a
     sudo apt install -y nvidia-cuda-toolkit
     pip3 install torch torchvision torchaudio
 
+
+## Models
+
+Weights from trained models can be found under the models folder. Currently for the KT-22 and Red Rocks scenes.
+
+
 ## Path Planning
 
 The notebook `height_net.ipynb` loads a trained NEMo (KT-22 or Red Rocks), and performs path planning via A* initialization then continuous path optimization.
