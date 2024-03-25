@@ -4,9 +4,9 @@ Code for Neural Elevation Models (NEMo), and framework for terrain mapping and p
 This repo contains code for loading trained NEMos and performing path planning on them.
 The code for NEMo training can be found at: https://github.com/Stanford-NavLab/nerfstudio/tree/adam/terrain
 
-{% include_relative results/path.html}
-
-Developed and tested on Ubuntu 20.04 and Windows 10.
+<p align="center">
+<img src='results/kt22_opt.png' width="600">
+</p>
 
 ## Setup
 
@@ -29,6 +29,7 @@ Install pytorch (https://pytorch.org/get-started/locally/), may need to reboot a
     sudo apt install -y nvidia-cuda-toolkit
     pip3 install torch torchvision torchaudio
 
+(Developed and tested on Ubuntu 20.04 and Windows 10)
 
 ## Models
 
