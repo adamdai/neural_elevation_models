@@ -33,6 +33,10 @@ Install tiny-cuda-nn:
 
     pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 
+Install GDAL (for working with `.tif` DEMs):
+
+    conda install -c conda-forge gdal
+
 (Developed and tested with Ubuntu 20.04 and Windows 10)
 
 ## Data
