@@ -29,7 +29,11 @@ Install pytorch (https://pytorch.org/get-started/locally/), may need to reboot a
     sudo apt install -y nvidia-cuda-toolkit
     pip3 install torch torchvision torchaudio
 
-(Developed and tested on Ubuntu 20.04 and Windows 10)
+Install tiny-cuda-nn:
+
+    pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+
+(Developed and tested with Ubuntu 20.04 and Windows 10)
 
 ## Data
 
