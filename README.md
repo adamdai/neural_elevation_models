@@ -5,7 +5,7 @@ This repo contains code for loading trained NEMos and performing path planning o
 The code for NEMo training can be found at: https://github.com/Stanford-NavLab/nerfstudio/tree/adam/terrain
 
 <p align="center">
-<img src='results/kt22_opt.png' width="600">
+<img src='results/overview_horizontal.png' width="1000">
 </p>
 
 ## Setup
