@@ -4,8 +4,9 @@ Code for Neural Elevation Models (NEMo), and framework for terrain mapping and p
 This repo contains code for loading trained NEMos and performing path planning on them.
 The code for NEMo training can be found at: https://github.com/Stanford-NavLab/nerfstudio/tree/adam/terrain
 
+<br>
 <p align="center">
-<img src='results/overview_horizontal.png' width="1000">
+<img src='results/overview_horizontal.png' width="900">
 </p>
 
 ## Setup
