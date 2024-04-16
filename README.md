@@ -42,7 +42,7 @@ Install GDAL (for working with `.tif` DEMs):
 
 ## Data
 
-Download the data folder from this link (*Insert google drive link*) and place it in the repo.
+Download the data folder from [this link](https://drive.google.com/drive/folders/1Raa2Z5ZtL9PDKfbaokhcdgk0SGlL-kAl?usp=sharing) and place it in the repo.
 ```
 data/
 |-- lunar/
@@ -56,7 +56,7 @@ These files are used for DEM comparison to COLMAP and ground truth.
 
 ## Models
 
-Weights from trained models can be found under the models folder. Currently for the KT-22 and Red Rocks scenes.
+Weights of trained height networks for the KT-22 and Red Rocks scenes can be found under the `models` folder. 
 
 
 ## Path Planning
