@@ -43,7 +43,7 @@ Install GDAL (for working with `.tif` DEMs):
 
 ## Data
 
-Download the data folder from [this link](https://drive.google.com/drive/folders/1Raa2Z5ZtL9PDKfbaokhcdgk0SGlL-kAl?usp=sharing) and place it in the repo.
+Download the data folder from [this link](https://drive.google.com/drive/folders/1SYb95B8LTitj2U5j3_VF_ZMr46UKhYDT?usp=sharing) and place it in the repo.
 ```
 data/
 |-- lunar/
