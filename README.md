@@ -39,7 +39,7 @@ Install GDAL (for working with `.tif` DEMs):
 
     conda install -c conda-forge gdal
 
-(Developed and tested with Ubuntu 20.04 and Windows 10)
+(Developed and tested with Ubuntu 20.04/22.04 and Windows 10)
 
 ## Data
 
