@@ -16,6 +16,7 @@
 
 import abc
 from typing import Optional, Union
+from dataclasses import dataclass
 
 import torch
 from functorch import jacrev, vmap

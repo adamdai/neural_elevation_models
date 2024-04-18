@@ -1,7 +1,8 @@
 import torch
 import tinycudann as tcnn
 
-from nerfstudio.field_components.spatial_distortions import SceneContraction
+# from nerfstudio.field_components.spatial_distortions import SceneContraction
+from nemo.spatial_distortions import SceneContraction
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

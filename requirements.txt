@@ -10,6 +10,8 @@ plotly
 pandas
 opencv-python
 tqdm
+gnss-lib-py
+jaxtyping
 
 # --find-links https://download.pytorch.org/whl/torch_stable.html
 # torch-2.2.1+cu118
