@@ -22,13 +22,14 @@ Create and activate conda environment:
     
 Install dependencies:
 
+    cd neural_elevation_models
     pip install -r requirements.txt
     pip install -e .
 
-Install pytorch (https://pytorch.org/get-started/locally/), may need to reboot after first line
+Install pytorch and cuda-toolkit:
 
-    sudo apt install -y nvidia-cuda-toolkit
-    pip3 install torch torchvision torchaudio
+    pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+    conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 
 Install tiny-cuda-nn:
 
@@ -38,11 +39,11 @@ Install GDAL (for working with `.tif` DEMs):
 
     conda install -c conda-forge gdal
 
-(Developed and tested with Ubuntu 20.04 and Windows 10)
+(Developed and tested with Ubuntu 20.04/22.04 and Windows 10)
 
 ## Data
 
-Download the data folder from [this link](https://drive.google.com/drive/folders/1Raa2Z5ZtL9PDKfbaokhcdgk0SGlL-kAl?usp=sharing) and place it in the repo.
+Download the data folder from [this link](https://drive.google.com/drive/folders/1SYb95B8LTitj2U5j3_VF_ZMr46UKhYDT?usp=sharing) and place it in the repo.
 ```
 data/
 |-- lunar/
