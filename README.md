@@ -26,7 +26,7 @@ Install dependencies:
     pip install -r requirements.txt
     pip install -e .
 
-Install pytorch (https://pytorch.org/get-started/locally/), may need to reboot after first line
+Install pytorch:
 
     sudo apt install -y nvidia-cuda-toolkit
     pip3 install torch torchvision torchaudio
