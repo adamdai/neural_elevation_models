@@ -26,10 +26,10 @@ Install dependencies:
     pip install -r requirements.txt
     pip install -e .
 
-Install pytorch:
+Install pytorch and cuda-toolkit:
 
-    sudo apt install -y nvidia-cuda-toolkit
-    pip3 install torch torchvision torchaudio
+    pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+    conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 
 Install tiny-cuda-nn:
 
