@@ -22,6 +22,7 @@ Create and activate conda environment:
     
 Install dependencies:
 
+    cd neural_elevation_models
     pip install -r requirements.txt
     pip install -e .
 
