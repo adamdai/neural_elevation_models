@@ -29,11 +29,14 @@ def plot_surface(x, y, z, fig=None, colorscale='Viridis', no_axes=False, showsca
     return fig
 
 
-def plot_path_3d(x, y, z, fig=None, color='red', markersize=3, linewidth=3):
+def plot_path_3d(x, y, z, fig=None, color='red', markersize=3, linewidth=3, markers=True, name=None):
     if fig is None:
         fig = go.Figure()
-    fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='markers+lines', marker=dict(size=markersize, color=color),
-                           line=dict(color=color, width=linewidth)))
+    if markers:
+        fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='markers+lines', marker=dict(size=markersize, color=color),
+                           line=dict(color=color, width=linewidth), name=name))
+    else:
+        fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='lines', line=dict(color=color, width=linewidth), name=name))
     return fig
 
 
