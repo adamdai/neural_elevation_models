@@ -19,10 +19,10 @@ def plot_heatmap(data, fig=None, colorscale='Viridis', no_axes=False):
 
 ##### ------------------- 3D ------------------- #####
 
-def plot_surface(x, y, z, fig=None, colorscale='Viridis', no_axes=False):
+def plot_surface(x, y, z, fig=None, colorscale='Viridis', no_axes=False, showscale=True):
     if fig is None:
         fig = go.Figure()
-    fig.add_trace(go.Surface(x=x, y=y, z=z, colorscale=colorscale))
+    fig.add_trace(go.Surface(x=x, y=y, z=z, colorscale=colorscale, showscale=showscale))
     fig.update_layout(width=1200, height=900, scene_aspectmode='data')
     if no_axes:
         fig.update_layout(scene=dict(xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False)))
