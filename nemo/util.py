@@ -18,6 +18,16 @@ def gradient(y, x, grad_outputs=None):
     return grad
 
 
+def grid_2d(N, bounds):
+    """Grid of 2D (N x N) points"""
+    xs = torch.linspace(bounds[0], bounds[1], N, device=device)
+    ys = torch.linspace(bounds[2], bounds[3], N, device=device)
+    XY_grid = torch.meshgrid(xs, ys, indexing='xy')
+    XY_grid = torch.stack(XY_grid, dim=-1)
+    positions = XY_grid.reshape(-1, 2)
+    return positions
+
+
 def wrap_angle_torch(angle):
     """Wrap angle to [-pi, pi] range"""
     return ((angle + TORCH_PI) % (2 * TORCH_PI)) - TORCH_PI
@@ -29,7 +39,7 @@ def path_metrics(path):
     ---------
     path: torch tensor (N, 3)
     """
-    print(f'Path length: {len(path)}')
+    print(f'Num points: {len(path)}')
 
     # Calculate the length of the path
     path_length_2d = 0
@@ -48,11 +58,13 @@ def path_metrics(path):
         height_diff += torch.abs(path_zs[i+1] - path_zs[i])
     print(f'Height delta sum: {height_diff.item()}')
 
-    # Average along slope (TODO)
+    # Average along-path slope 
     slope = 0
     delta_zs = path_zs[1:] - path_zs[:-1]
     delta_xys = path_xy[1:] - path_xy[:-1]
     slopes = delta_zs / torch.norm(delta_xys)
+    print("Average along-path slope: ", torch.abs(slopes).mean().item())
+    # Min, max (TODO)
 
     # Average lateral slope (TODO - need to use heightmap)
 
