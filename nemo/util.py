@@ -7,9 +7,13 @@ import torch
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+import requests
+import urllib
+import concurrent.futures
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TORCH_PI = torch.tensor(np.pi, device=device)
+
 
 def gradient(y, x, grad_outputs=None):
     if grad_outputs is None:
@@ -93,3 +97,31 @@ def parse_colmap_point_cloud(filename):
                 points.append(point)
                 colors.append(color)
     return np.array(points), np.array(colors)
+
+
+def elevation_function(df, lat_column, lon_column):
+    """Query service using lat, lon. Add the elevation values as a new column.
+    
+    Uses parallel threads for faster querying.
+    
+    """
+    url = 'https://epqs.nationalmap.gov/v1/json?'
+    
+    # Function to query elevation for a single point
+    def query_elevation(lat, lon):
+        params = {
+            'output': 'json',
+            'x': lon,
+            'y': lat,
+            'units': 'Meters'
+        }
+        result = requests.get((url + urllib.parse.urlencode(params)))
+        return result.json()['value']
+    
+    # Parallelize elevation queries
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Map latitudes and longitudes to query function
+        elevations = list(executor.map(query_elevation, df[lat_column], df[lon_column]))
+    
+    # Add elevations to DataFrame
+    df['elev_meters'] = elevations
