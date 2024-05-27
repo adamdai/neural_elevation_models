@@ -22,6 +22,16 @@ def gradient(y, x, grad_outputs=None):
     return grad
 
 
+def grid_2d(N, bounds):
+    """Grid of 2D (N x N) points"""
+    xs = torch.linspace(bounds[0], bounds[1], N, device=device)
+    ys = torch.linspace(bounds[2], bounds[3], N, device=device)
+    XY_grid = torch.meshgrid(xs, ys, indexing='xy')
+    XY_grid = torch.stack(XY_grid, dim=-1)
+    positions = XY_grid.reshape(-1, 2)
+    return positions
+
+
 def wrap_angle_torch(angle):
     """Wrap angle to [-pi, pi] range"""
     return ((angle + TORCH_PI) % (2 * TORCH_PI)) - TORCH_PI
