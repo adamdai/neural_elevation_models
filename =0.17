@@ -1,0 +1,13 @@
+Collecting scikit-build
+  Downloading scikit_build-0.17.6-py3-none-any.whl.metadata (14 kB)
+Collecting distro (from scikit-build)
+  Downloading distro-1.9.0-py3-none-any.whl.metadata (6.8 kB)
+Requirement already satisfied: packaging in /home/adam/anaconda3/envs/nemo/lib/python3.8/site-packages (from scikit-build) (24.0)
+Requirement already satisfied: setuptools>=42.0.0 in /home/adam/anaconda3/envs/nemo/lib/python3.8/site-packages (from scikit-build) (69.5.1)
+Requirement already satisfied: tomli in /home/adam/anaconda3/envs/nemo/lib/python3.8/site-packages (from scikit-build) (2.0.1)
+Requirement already satisfied: wheel>=0.32.0 in /home/adam/anaconda3/envs/nemo/lib/python3.8/site-packages (from scikit-build) (0.43.0)
+Downloading scikit_build-0.17.6-py3-none-any.whl (84 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 84.3/84.3 kB 4.4 MB/s eta 0:00:00
+Downloading distro-1.9.0-py3-none-any.whl (20 kB)
+Installing collected packages: distro, scikit-build
+Successfully installed distro-1.9.0 scikit-build-0.17.6
