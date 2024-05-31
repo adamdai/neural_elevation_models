@@ -23,7 +23,7 @@ def plot_surface(x, y, z, fig=None, colorscale='Viridis', no_axes=False, showsca
     if fig is None:
         fig = go.Figure()
     fig.add_trace(go.Surface(x=x, y=y, z=z, colorscale=colorscale, showscale=showscale))
-    fig.update_layout(width=1200, height=900, scene_aspectmode='data')
+    fig.update_layout(width=1600, height=900, scene_aspectmode='data')
     if no_axes:
         fig.update_layout(scene=dict(xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False)))
     return fig
