@@ -2,6 +2,7 @@
 
 """
 
+import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 
@@ -46,3 +47,51 @@ def plot_3d_points(x, y, z, fig=None, color='blue', markersize=3):
     fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='markers', marker=dict(size=markersize, color=color)))
     fig.update_layout(width=1200, height=900, scene_aspectmode='data')
     return fig
+
+
+def plot_rotating_surface(x, y, z, fig=None):
+
+    fig = plot_surface(x, y, z, no_axes=True, showscale=False)
+    fig.update_layout(width=1600, height=900)
+    fig.show()
+
+    x_eye = 1.5
+    y_eye = -1
+    z_eye = 1
+
+    fig.update_layout(
+            title='Animation Test',
+            width=1600,
+            height=900,
+            scene_camera_eye=dict(x=x_eye, y=y_eye, z=z_eye),
+            updatemenus=[dict(type='buttons',
+                    showactive=False,
+                    y=1,
+                    x=0.8,
+                    xanchor='left',
+                    yanchor='bottom',
+                    pad=dict(t=45, r=10),
+                    buttons=[dict(label='Play',
+                                    method='animate',
+                                    args=[None, dict(frame=dict(duration=5, redraw=True), 
+                                                                transition=dict(duration=0),
+                                                                fromcurrent=True,
+                                                                mode='immediate'
+                                                                )]
+                                                )
+                                        ]
+                                )
+                            ]
+    )
+
+    def rotate_z(x, y, z, theta):
+        w = x+1j*y
+        return np.real(np.exp(1j*theta)*w), np.imag(np.exp(1j*theta)*w), z
+
+    frames=[]
+    for t in np.arange(0, 6.26, 0.025):
+        xe, ye, ze = rotate_z(x_eye, y_eye, z_eye, t)
+        frames.append(go.Frame(layout=dict(scene_camera_eye=dict(x=xe, y=ye, z=ze))))
+    fig.frames=frames
+
+    fig.show()
