@@ -126,5 +126,5 @@ class Nemo:
         x_grid = XY_grid[:,:,0].detach().cpu().numpy()
         y_grid = XY_grid[:,:,1].detach().cpu().numpy()
 
-        fig = plot_surface(x_grid, y_grid, z_grid, no_axes=True)
+        fig = plot_surface(x_grid, y_grid, z_grid, showscale=False)
         return fig
