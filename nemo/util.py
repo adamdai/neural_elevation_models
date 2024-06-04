@@ -37,6 +37,21 @@ def wrap_angle_torch(angle):
     return ((angle + TORCH_PI) % (2 * TORCH_PI)) - TORCH_PI
 
 
+def unreal_to_airsim(xy, origin):
+    """Convert Unreal Engine coordinates to AirSim coordinates
+    
+    Unreal origin is at the center of the full landscape.
+    Both coordinates are in meters.
+    
+    """
+    pass
+
+
+def airsim_to_unreal(xy, origin):
+    """Convert AirSim coordinates to Unreal Engine coordinates"""
+    pass
+
+
 def path_metrics(path):
     """
     Parameters

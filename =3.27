@@ -1,6 +1,0 @@
-Collecting cmake
-  Downloading cmake-3.29.3-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.1 kB)
-Downloading cmake-3.29.3-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (26.7 MB)
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 26.7/26.7 MB 83.9 MB/s eta 0:00:00
-Installing collected packages: cmake
-Successfully installed cmake-3.29.3
