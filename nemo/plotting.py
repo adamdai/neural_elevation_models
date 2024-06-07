@@ -20,24 +20,24 @@ def plot_heatmap(data, fig=None, colorscale='Viridis', no_axes=False):
 
 ##### ------------------- 3D ------------------- #####
 
-def plot_surface(x, y, z, fig=None, colorscale='Viridis', no_axes=False, showscale=True):
+def plot_surface(x, y, z, fig=None, colorscale='Viridis', no_axes=False, showscale=True, **kwargs):
     if fig is None:
         fig = go.Figure()
-    fig.add_trace(go.Surface(x=x, y=y, z=z, colorscale=colorscale, showscale=showscale))
+    fig.add_trace(go.Surface(x=x, y=y, z=z, colorscale=colorscale, showscale=showscale, **kwargs))
     fig.update_layout(width=1600, height=900, scene_aspectmode='data')
     if no_axes:
         fig.update_layout(scene=dict(xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False)))
     return fig
 
 
-def plot_path_3d(x, y, z, fig=None, color='red', markersize=3, linewidth=3, markers=True, name=None):
+def plot_path_3d(x, y, z, fig=None, color='red', markersize=3, linewidth=3, markers=True, name=None, **kwargs):
     if fig is None:
         fig = go.Figure()
     if markers:
         fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='markers+lines', marker=dict(size=markersize, color=color),
-                           line=dict(color=color, width=linewidth), name=name))
+                           line=dict(color=color, width=linewidth), name=name, **kwargs))
     else:
-        fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='lines', line=dict(color=color, width=linewidth), name=name))
+        fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='lines', line=dict(color=color, width=linewidth), name=name, **kwargs))
     return fig
 
 

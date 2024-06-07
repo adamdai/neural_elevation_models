@@ -61,7 +61,6 @@ class Nemo:
 
     def get_heights(self, positions):
         """Query heights"""
-        positions = torch.cat([positions, torch.zeros_like(positions[..., :1])], dim=-1)
         positions = self.spatial_distortion(positions)
         positions = (positions + 2.0) / 4.0
         encs = self.encoding(positions[:, :2])
@@ -71,7 +70,6 @@ class Nemo:
 
     def get_heights_with_grad(self, positions):
         """Query heights and gradients"""
-        positions = torch.cat([positions, torch.zeros_like(positions[..., :1])], dim=-1)
         positions = self.spatial_distortion(positions)
         positions = (positions + 2.0) / 4.0
         encs = self.encoding(positions[:, :2])
