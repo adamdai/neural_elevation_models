@@ -9,6 +9,17 @@ The code for NEMo training can be found at: https://github.com/Stanford-NavLab/n
 <img src='results/overview_horizontal.png' width="900">
 </p>
 
+Paper: https://arxiv.org/abs/2405.15227 
+```
+@article{dai2024neural,
+  title={Neural Elevation Models for Terrain Mapping and Path Planning},
+  author={Dai, Adam and Gupta, Shubh and Gao, Grace},
+  journal={arXiv preprint arXiv:2405.15227},
+  year={2024}
+}
+```
+(Extended RA-L version in preparation)
+
 ## Setup
 
 Clone the GitHub repository:
