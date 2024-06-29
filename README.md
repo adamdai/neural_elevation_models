@@ -1,4 +1,4 @@
-# Neural Elevation Models (NEMo) for Terrain Mapping and Planning
+# Neural Elevation Models (NEMo) for Terrain Mapping and Path Planning
 
 Code for Neural Elevation Models (NEMo), and framework for terrain mapping and path planning. 
 This repo contains code for loading trained NEMos and performing path planning on them.
