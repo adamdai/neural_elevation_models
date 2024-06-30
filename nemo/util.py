@@ -10,12 +10,18 @@ import plotly.express as px
 import requests
 import urllib
 import concurrent.futures
+import sys
+from contextlib import contextmanager
+import io
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TORCH_PI = torch.tensor(np.pi, device=device)
 
 
+#%========================= -- Pytorch -- =========================%#
+
 def gradient(y, x, grad_outputs=None):
+    """Compute the gradient of y with respect to x"""
     if grad_outputs is None:
         grad_outputs = torch.ones_like(y)
     grad = torch.autograd.grad(y, [x], grad_outputs=grad_outputs, create_graph=True)[0]
@@ -29,13 +35,15 @@ def grid_2d(N, bounds):
     XY_grid = torch.meshgrid(xs, ys, indexing='xy')
     XY_grid = torch.stack(XY_grid, dim=-1)
     positions = XY_grid.reshape(-1, 2)
-    return positions
+    return positions, XY_grid
 
 
 def wrap_angle_torch(angle):
     """Wrap angle to [-pi, pi] range"""
     return ((angle + TORCH_PI) % (2 * TORCH_PI)) - TORCH_PI
 
+
+#%========================= -- Coordinates -- =========================%#
 
 def unreal_to_airsim(xy, origin):
     """Convert Unreal Engine coordinates to AirSim coordinates
@@ -51,6 +59,8 @@ def airsim_to_unreal(xy, origin):
     """Convert AirSim coordinates to Unreal Engine coordinates"""
     pass
 
+
+#%========================= -- Path -- =========================%#
 
 def path_metrics(path):
     """
@@ -95,6 +105,7 @@ def path_metrics(path):
     print(f'Average jerk: {jerk.item()/len(path)}')
 
 
+#%========================= -- DEMs -- =========================%#
 
 def parse_colmap_point_cloud(filename):
     """
@@ -150,5 +161,3 @@ def elevation_function(df, lat_column, lon_column):
     
     # Add elevations to DataFrame
     df['elev_meters'] = elevations
-
-
