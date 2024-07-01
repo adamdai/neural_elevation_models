@@ -7,7 +7,7 @@ The code for NEMo training can be found [here](https://github.com/Stanford-NavLa
 <img src='images/nemo_overview.png' width="1000">
 </p>
 
-Terrain images are collected which are used to train the NEMo. We use simulated environments in Unreal Engine with AirSim to run validation of planned paths.  
+Terrain images are collected which are used to train the NEMo. We use simulated environments in Unreal Engine with [AirSim](https://microsoft.github.io/AirSim/) to run validation of planned paths.  
 
 Paper: https://arxiv.org/abs/2405.15227 
 ```
@@ -74,3 +74,6 @@ Weights of trained height networks for the KT-22, Red Rocks, AirSim Mountains, a
 ## Path Planning
 
 The script `nemo_planning.py` loads a trained NEMo and performs path planning via A* initialization then continuous path optimization.
+For AirSim environments, it generates a `path.npy` file which can then be used by the `car_path_track.py` scripts in [AirSim-Data-Collection](https://github.com/adamdai/AirSim-Data-Collection) 
+to execute the path in simulation.
+
