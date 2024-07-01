@@ -2,12 +2,12 @@
 
 Code for Neural Elevation Models (NEMo), and framework for terrain mapping and path planning. 
 This repo contains code for loading trained NEMos and performing path planning on them.
-The code for NEMo training can be found at: https://github.com/Stanford-NavLab/nerfstudio/tree/adam/terrain
-
-<br>
+The code for NEMo training can be found [here](https://github.com/Stanford-NavLab/nerfstudio/tree/adam/terrain).
 <p align="center">
-<img src='results/overview_horizontal.png' width="900">
+<img src='images/nemo_overview.png' width="1000">
 </p>
+
+Terrain images are collected which are used to train the NEMo. We use simulated environments in Unreal Engine with AirSim to run validation of planned paths.  
 
 Paper: https://arxiv.org/abs/2405.15227 
 ```
@@ -68,9 +68,9 @@ These files are used for DEM comparison to COLMAP and ground truth.
 
 ## Models
 
-Weights of trained height networks for the KT-22 and Red Rocks scenes can be found under the `models` folder. 
+Weights of trained height networks for the KT-22, Red Rocks, AirSim Mountains, and Unreal Moon scenes can be found under the `models` folder. 
 
 
 ## Path Planning
 
-The notebook `height_net.ipynb` loads a trained NEMo (KT-22 or Red Rocks), and performs path planning via A* initialization then continuous path optimization.
+The script `nemo_planning.py` loads a trained NEMo and performs path planning via A* initialization then continuous path optimization.
