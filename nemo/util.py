@@ -5,14 +5,9 @@
 
 import torch
 import numpy as np
-import plotly.graph_objects as go
-import plotly.express as px
 import requests
 import urllib
 import concurrent.futures
-import sys
-from contextlib import contextmanager
-import io
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TORCH_PI = torch.tensor(np.pi, device=device)
@@ -45,6 +40,7 @@ def wrap_angle_torch(angle):
 
 #%========================= -- Coordinates -- =========================%#
 
+# TODO
 def unreal_to_airsim(xy, origin):
     """Convert Unreal Engine coordinates to AirSim coordinates
     
@@ -55,6 +51,7 @@ def unreal_to_airsim(xy, origin):
     pass
 
 
+# TODO
 def airsim_to_unreal(xy, origin):
     """Convert AirSim coordinates to Unreal Engine coordinates"""
     pass
