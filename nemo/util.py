@@ -41,13 +41,19 @@ def wrap_angle_torch(angle):
 #%========================= -- Coordinates -- =========================%#
 
 # TODO
-def unreal_to_airsim(xy, origin):
+def unreal_to_airsim(xy, params):
     """Convert Unreal Engine coordinates to AirSim coordinates
     
     Unreal origin is at the center of the full landscape.
     Both coordinates are in meters.
     
     """
+    params['dataparser_transform']
+    params['dataparser_scale']
+    params['unreal_origin']
+    params['airsim_start']
+    params['airsim_end']
+    params['spiral_center']
     pass
 
 
