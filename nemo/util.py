@@ -41,26 +41,40 @@ def wrap_angle_torch(angle):
 #%========================= -- Coordinates -- =========================%#
 
 # TODO
-def unreal_to_airsim(xy, params):
-    """Convert Unreal Engine coordinates to AirSim coordinates
-    
-    Unreal origin is at the center of the full landscape.
-    Both coordinates are in meters.
+def nemo_to_airsim(coord, params):
+    """Convert NEMo coordinates to AirSim coordinates
     
     """
-    params['dataparser_transform']
-    params['dataparser_scale']
-    params['unreal_origin']
-    params['airsim_start']
-    params['airsim_end']
-    params['spiral_center']
-    pass
+    coord /= params['dataparser_scale']
+    R = params['dataparser_transform'][:3,:3]
+    t = params['dataparser_transform'][:3,3]
+    coord = (coord - t) @ R
+    coord = coord[:,[1,0,2]]
+    coord[:,2] *= -1
+    coord += params['spiral_center']
+    return coord
 
 
 # TODO
-def airsim_to_unreal(xy, origin):
-    """Convert AirSim coordinates to Unreal Engine coordinates"""
-    pass
+def airsim_to_nemo(coord, params):
+    """Convert AirSim coordinates to NEMo coordinates
+    
+    Parameters
+    ----------
+    coord: torch tensor (N, 3)
+        AirSim coordinates
+    params: dict
+        Parameters for the conversion
+    
+    """
+    coord -= params['spiral_center']  # Shift by spiral center offset
+    coord = coord[:,[1,0,2]]  # Swap x and y
+    coord[:,2] *= -1  # Flip z
+    R = params['dataparser_transform'][:3,:3]
+    t = params['dataparser_transform'][:3,3]
+    coord = coord @ R.T + t
+    coord *= params['dataparser_scale']
+    return coord
 
 
 #%========================= -- Path -- =========================%#
