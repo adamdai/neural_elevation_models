@@ -1,6 +1,7 @@
 import torch
 
 from nemo.util import wrap_angle_torch
+from nemo.dynamics import diff_flatness
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -62,4 +63,42 @@ def path_optimization(nemo, path_xy, iterations=500, lr=1e-3):
     # Full 3D path
     path_3d = torch.cat((path, path_zs), dim=1)
 
+    return path_3d
+
+
+
+def terrain_aware_path_optimization(nemo, path_xy, iterations=500, lr=1e-3):
+    """
+    Path optimization with terrain-aware differential flatness
+
+    nemo : height field
+    path_xy : initial 2D path (torch tensor)
+    iterations : number of optimization iterations
+    lr : learning rate
+    (TODO) tol : tolerance for convergence 
+
+    """
+    path_start = path_xy[0]
+    path_end = path_xy[-1]
+    path_opt = path_xy[1:-1].clone().detach().requires_grad_(True)  # portion of the path to optimize
+    # path = torch.cat((path_start[None], path_opt, path_end[None]), dim=0)  # full path
+
+    # Optimize path
+    opt = torch.optim.Adam([path_opt], lr=lr)
+
+    for it in range(iterations):
+        opt.zero_grad()
+        path = torch.cat((path_start[None], path_opt, path_end[None]), dim=0)
+        u = diff_flatness(path, nemo, dt=1.0)
+        c = torch.sum(u**2)
+        c.backward()
+        opt.step()
+        if it % 50 == 0:
+            print(f'it: {it},  Cost: {c.item()}')
+
+    print(f'Finished optimization - final cost: {c.item()}')
+
+    # Compute final heights and get full 3D path
+    path_zs = nemo.get_heights(path)
+    path_3d = torch.cat((path, path_zs), dim=1)
     return path_3d

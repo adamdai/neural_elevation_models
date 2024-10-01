@@ -132,4 +132,4 @@ if __name__ == "__main__":
         airsim_path_3d = nemo_to_airsim(opt_path.detach().cpu().numpy(), params)
 
         print("Saving path...")
-        np.save('../results/airsim_paths/path.npy', airsim_path_3d)
+        np.save(f'../results/airsim_paths/{SCENE_NAME}_path.npy', airsim_path_3d)

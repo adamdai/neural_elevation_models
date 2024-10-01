@@ -137,7 +137,7 @@ class Nemo:
         # XY_grid = torch.meshgrid(xs, ys, indexing='xy')
         # XY_grid = torch.stack(XY_grid, dim=-1)
         # positions = XY_grid.reshape(-1, 2)
-        positions = grid_2d(N, bounds)
+        positions, XY_grid = grid_2d(N, bounds)
         positions.requires_grad = True
         _, grad = self.get_heights_with_grad(positions)
 
