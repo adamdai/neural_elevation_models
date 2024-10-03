@@ -1,4 +1,6 @@
 import torch
+import cvxpy as cp
+from cvxpylayers.torch import CvxpyLayer
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -53,12 +55,67 @@ def diff_flatness(xy, nemo, dt):
     phi = alpha * torch.cos(theta - psi)
     g_eff = 9.81 * torch.sin(phi)
 
+    u = cp.Variable(2)
+    J = cp.Parameter((2, 2))
+    b = cp.Parameter(2)
+    objective = cp.Minimize(cp.norm(J @ u - b))
+    problem = cp.Problem(objective)
+    cvxpylayer = CvxpyLayer(problem, parameters=[J, b], variables=[u])
+
     u = torch.zeros(len(x), 2)
     for i in range(len(x)):
-        J = torch.tensor([[torch.cos(theta[i]), -v[i] * torch.sin(theta[i])],
-                          [torch.sin(theta[i]), v[i] * torch.cos(theta[i])]], device=device, requires_grad=True)
-        b = torch.tensor([[xddot[i] + g_eff[i] * torch.cos(theta[i])],
-                          [yddot[i] + g_eff[i] * torch.sin(theta[i])]], device=device, requires_grad=True)
-        u[i] = torch.linalg.solve(J, b).flatten()
+        J_tch = torch.stack([torch.cos(theta[i]), -v[i] * torch.sin(theta[i]),
+                        torch.sin(theta[i]), v[i] * torch.cos(theta[i])]).reshape(2, 2)
+        b_tch = torch.stack([xddot[i] + g_eff[i] * torch.cos(theta[i]),
+                        yddot[i] + g_eff[i] * torch.sin(theta[i])])
+        u[i], = cvxpylayer(J_tch, b_tch)
+
+    return u
+
+
+def diff_flatness_siren(xy, siren, dt):
+    """
+    
+    u : (a, omega)
+    
+    """
+    x = xy[:, 0]
+    y = xy[:, 1]
+    epsilon = torch.tensor(1e-5, device=device, requires_grad=True)
+    xdot = torch.hstack((epsilon, torch.diff(x) / dt))
+    ydot = torch.hstack((epsilon, torch.diff(y) / dt))
+    xddot = torch.hstack((epsilon, torch.diff(xdot) / dt))
+    yddot = torch.hstack((epsilon, torch.diff(ydot) / dt))
+    v = torch.sqrt(xdot**2 + ydot**2)
+    theta = torch.arctan2(ydot, xdot)
+    
+    _, grad = siren.forward_with_grad(xy.clone().requires_grad_(True))
+    psi = torch.atan2(grad[:,1], grad[:,0])
+    alpha = torch.atan(grad.norm(dim=1))
+
+    phi = alpha * torch.cos(theta - psi)
+    g_eff = 9.81 * torch.sin(phi)
+
+    # u = cp.Variable(2)
+    # J = cp.Parameter((2, 2))
+    # b = cp.Parameter(2)
+    # objective = cp.Minimize(cp.norm(J @ u - b))
+    # problem = cp.Problem(objective)
+    # cvxpylayer = CvxpyLayer(problem, parameters=[J, b], variables=[u])
+
+    u = torch.zeros(len(x), 2)
+    # TODO: do this in batch
+    for i in range(len(x)):
+        # J_tch = torch.stack([torch.cos(theta[i]), -v[i] * torch.sin(theta[i]),
+        #                 torch.sin(theta[i]), v[i] * torch.cos(theta[i])]).reshape(2, 2)
+        # b_tch = torch.stack([xddot[i] + g_eff[i] * torch.cos(theta[i]),
+        #                 yddot[i] + g_eff[i] * torch.sin(theta[i])])
+        # u[i], = cvxpylayer(J_tch, b_tch)
+
+        J_inv = torch.stack([v[i] * torch.cos(theta[i]), v[i] * torch.sin(theta[i]),
+                             -torch.sin(theta[i]), torch.cos(theta[i])]).reshape(2, 2) / v[i]
+        b = torch.stack([xddot[i] + g_eff[i] * torch.cos(theta[i]),
+                         yddot[i] + g_eff[i] * torch.sin(theta[i])])
+        u[i] = J_inv @ b
 
     return u
