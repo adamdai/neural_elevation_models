@@ -13,6 +13,7 @@ tqdm
 gnss-lib-py
 jaxtyping
 open3d
+cvxpylayers
 
 # --find-links https://download.pytorch.org/whl/torch_stable.html
 # torch-2.2.1+cu118
