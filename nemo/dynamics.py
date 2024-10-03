@@ -34,6 +34,43 @@ def compute_slopes_plane_fit(xy, nemo):
     pass
 
 
+
+def forward_dynamics(init_state, u, siren, dt):
+    state = init_state
+    state_hist = torch.zeros(len(u), 4)
+
+    for i in range(len(u)):
+        # Unpack state and control
+        x, y, v, theta = state
+        a, omega = u[i]
+
+        # Query height field to get slope angle and direction
+        pos = torch.tensor([[x, y]], device=device, requires_grad=True)
+        _, grad = siren.forward_with_grad(pos)
+        psi = torch.arctan2(grad[0][1], grad[0][0])  # slope direction (0 is +Y, pi/2 is +X)
+        slope = torch.arctan(grad.norm())  # slope angle (positive is uphill, negative is downhill) 
+        
+        # Calculate effective slope (pitch)
+        phi = slope * torch.cos(theta - psi)
+        
+        # Calculate acceleration
+        a_net = a - g * torch.sin(phi)
+
+        # Integrate velocity and position
+        v_next = v + a_net * dt
+        x_next = x + v * torch.cos(theta) * torch.cos(phi) * dt
+        y_next = y + v * torch.sin(theta) * torch.cos(phi) * dt
+
+        # Integrate theta
+        theta_next = theta + omega * dt  # turning rate proportional to velocity
+
+        # Update and log state
+        state = torch.tensor([x_next, y_next, v_next, theta_next], device=device)
+        state_hist[i] = state
+    
+    return state_hist
+
+
 # TODO: test version with cos(\phi) term
 
 
