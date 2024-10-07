@@ -90,20 +90,13 @@ def diff_flatness(xy, nemo, dt):
     phi = alpha * torch.cos(theta - psi)
     g_eff = 9.81 * torch.sin(phi)
 
-    u = cp.Variable(2)
-    J = cp.Parameter((2, 2))
-    b = cp.Parameter(2)
-    objective = cp.Minimize(cp.norm(J @ u - b))
-    problem = cp.Problem(objective)
-    cvxpylayer = CvxpyLayer(problem, parameters=[J, b], variables=[u])
-
     u = torch.zeros(len(x), 2)
     for i in range(len(x)):
-        J_tch = torch.stack([torch.cos(theta[i]), -v[i] * torch.sin(theta[i]),
-                        torch.sin(theta[i]), v[i] * torch.cos(theta[i])]).reshape(2, 2)
-        b_tch = torch.stack([xddot[i] + g_eff[i] * torch.cos(theta[i]),
-                        yddot[i] + g_eff[i] * torch.sin(theta[i])])
-        u[i], = cvxpylayer(J_tch, b_tch)
+        J_inv = torch.stack([v[i] * torch.cos(theta[i]), v[i] * torch.sin(theta[i]),
+                             -torch.sin(theta[i]), torch.cos(theta[i])]).reshape(2, 2) / v[i]
+        b = torch.stack([xddot[i] + g_eff[i] * torch.cos(theta[i]),
+                         yddot[i] + g_eff[i] * torch.sin(theta[i])])
+        u[i] = J_inv @ b
 
     return u
 

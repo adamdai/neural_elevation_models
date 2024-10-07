@@ -17,7 +17,7 @@ SCENE_NAME = 'UnrealMoon'  # 'KT22', 'RedRocks', 'UnrealMoon', 'AirSimMountains'
 
 N_GRID = 64  # Grid resolution for A*
 N_PLOT = 256  # Grid resolution for plotting
-HEIGHT_SCALE = 1e3  # Height scaling factor for A*
+HEIGHT_SCALE = 1e2  # Height scaling factor for A*
 
 AIRSIM = True if SCENE_NAME == 'AirSimMountains' or 'UnrealMoon' else False
 
