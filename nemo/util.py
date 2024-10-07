@@ -68,7 +68,7 @@ def airsim_to_nemo(coord, params):
     
     """
     coord -= params['spiral_center']  # Shift by spiral center offset
-    coord = coord[:,[1,0,2]]  # Swap x and y
+    coord = coord[:,[1,0,2]]  # Swap x and y  
     coord[:,2] *= -1  # Flip z
     R = params['dataparser_transform'][:3,:3]
     t = params['dataparser_transform'][:3,3]

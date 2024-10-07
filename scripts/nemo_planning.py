@@ -13,7 +13,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 #%%========================= -- Parameters -- =========================%%#
 
-SCENE_NAME = 'AirSimMountains'  # 'KT22', 'RedRocks', 'UnrealMoon', 'AirSimMountains'
+SCENE_NAME = 'UnrealMoon'  # 'KT22', 'RedRocks', 'UnrealMoon', 'AirSimMountains'
 
 N_GRID = 64  # Grid resolution for A*
 N_PLOT = 256  # Grid resolution for plotting
@@ -35,11 +35,12 @@ if AIRSIM:
         params['spiral_center'] = np.array([99., -449., -57.])
     elif SCENE_NAME == 'UnrealMoon':
         airsim_start = np.array([[0.0, 0.0, 0.0]])  
-        airsim_end = airsim_start + np.array([[1050.0, -324.0, -20.0]]) 
-        params['spiral_center'] = np.array([-8.0, 601.0, -41.0])  
+        airsim_end = airsim_start + np.array([[1050.0, 324.0, -20.0]]) 
+        params['spiral_center'] = np.array([524.4, 168.3, 0.0])   
 
     scene_start = airsim_to_nemo(airsim_start, params).squeeze()[:2]
     scene_end = airsim_to_nemo(airsim_end, params).squeeze()[:2]
+    print(f"Start: {airsim_start}, End: {airsim_end}\n")
 else:
     # Specify start and end in scene coordinates
     scene_start = (0.7, 0.7)

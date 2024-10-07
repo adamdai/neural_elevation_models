@@ -1,6 +1,4 @@
 import torch
-import cvxpy as cp
-from cvxpylayers.torch import CvxpyLayer
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
