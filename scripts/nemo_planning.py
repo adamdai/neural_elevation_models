@@ -110,15 +110,15 @@ if __name__ == "__main__":
     y_grid = XY_grid[:,:,1].detach().cpu().numpy()
 
     # Plot height field and paths
-    fig = plot_surface(x_grid, y_grid, z_grid, no_axes=False, showscale=True)
+    fig = plot_surface(x_grid, y_grid, z_grid, no_axes=True, showscale=False)
     fig = plot_path_3d(x=astar_path[:,0].detach().cpu().numpy(),
                        y=astar_path[:,1].detach().cpu().numpy(),
-                       z=astar_path[:,2].detach().cpu().numpy(), 
+                       z=astar_path[:,2].detach().cpu().numpy()+1e-3, 
                        fig=fig, color='red', linewidth=5, markers=True, name='A* Path')
     fig = plot_path_3d(x=opt_path[:,0].detach().cpu().numpy(), 
                        y=opt_path[:,1].detach().cpu().numpy(), 
-                       z=opt_path[:,2].detach().cpu().numpy(), 
-                       fig=fig, color='orange', linewidth=5, markers=False, name='Optimized Path')
+                       z=opt_path[:,2].detach().cpu().numpy()+1e-3, 
+                       fig=fig, color='orange', linewidth=10, markers=False, name='Optimized Path')
     fig.update_layout(width=1600, height=900)
     fig.show()
 

@@ -40,7 +40,6 @@ def wrap_angle_torch(angle):
 
 #%========================= -- Coordinates -- =========================%#
 
-# TODO
 def nemo_to_airsim(coord, params):
     """Convert NEMo coordinates to AirSim coordinates
     
@@ -55,7 +54,6 @@ def nemo_to_airsim(coord, params):
     return coord
 
 
-# TODO
 def airsim_to_nemo(coord, params):
     """Convert AirSim coordinates to NEMo coordinates
     
