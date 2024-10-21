@@ -24,6 +24,8 @@ patch_center = np.array([576.22075927, -1656.53742188])   # moon_spiral_2 spiral
 
 save_path = '../data/dem_pc.ply'
 
+PLOT = False
+
 # %% Get patch extent
 
 image = Image.open(heightmap_path)
@@ -39,10 +41,11 @@ print(f"patch_max: {patch_max}")
 patch = heightmap[patch_min[1]:patch_max[1], patch_min[0]:patch_max[0]]
 
 # Plot the full heightmap with a box around the patch
-plt.imshow(heightmap, cmap='gray')
-plt.plot([patch_min[0], patch_max[0], patch_max[0], patch_min[0], patch_min[0]],
-         [patch_min[1], patch_min[1], patch_max[1], patch_max[1], patch_min[1]], color='red')
-plt.show()
+if PLOT:
+    plt.imshow(heightmap, cmap='gray')
+    plt.plot([patch_min[0], patch_max[0], patch_max[0], patch_min[0], patch_min[0]],
+            [patch_min[1], patch_min[1], patch_max[1], patch_max[1], patch_min[1]], color='red')
+    plt.show()
 
 # %% Scale heights
 
@@ -74,10 +77,11 @@ for frame in transforms['frames']:
 
 positions = np.array(positions)
 
-fig = go.Figure()
-plot_surface(x=X, y=-Y, z=patch_adj, fig=fig)
-plot_3d_points(x=positions[:,0], y=-positions[:,1], z=positions[:,2], fig=fig, color='red')
-fig.show()
+if PLOT:
+    fig = go.Figure()
+    plot_surface(x=X, y=-Y, z=patch_adj, fig=fig)
+    plot_3d_points(x=positions[:,0], y=-positions[:,1], z=positions[:,2], fig=fig, color='red')
+    fig.show()
 
 
 # %% Save patch as point cloud
@@ -88,5 +92,6 @@ dem_points = np.stack([X.flatten(), -Y.flatten(), patch_adj.flatten()], axis=1)
 colors = 128 * np.ones_like(dem_points)
 
 generate_ply_from_dem(dem_points, colors, save_path)
+np.save(save_path.replace('.ply', '.npy'), dem_points)
 
 print(f"Saved DEM patch point cloud to {save_path}")
