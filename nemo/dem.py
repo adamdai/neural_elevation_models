@@ -1,15 +1,13 @@
-"""Digital Elevation Model (DEM) class and functions.
-
-"""
+"""Digital Elevation Model (DEM) class and functions."""
 
 import numpy as np
 
-from nemo.plotting import plot_heatmap
+from nemo.util.plotting import plot_heatmap
 
 
 class DEM:
     """
-    
+
     Attributes
     ----------
     data : np.array (N, M)
@@ -27,9 +25,10 @@ class DEM:
         Query elevation at given xy point.
 
     """
+
     def __init__(self, data, extent=None):
         """
-        
+
         data : np.array (N, M)
             2D array of Elevation data.
 
@@ -43,16 +42,14 @@ class DEM:
         else:
             self.extent = extent
 
-
     def handle_missing_data(self):
         """
         Handle missing data entries in the DEM tif file.
 
         """
-        missing = (self.data == -32767.0)
+        missing = self.data == -32767.0
         min_val = np.min(self.data[~missing])
         self.data[missing] = min_val
-
 
     def downsample(self, factor):
         """
@@ -71,7 +68,6 @@ class DEM:
         """
         data = self.data[::factor, ::factor]
         return DEM(data)
-    
 
     def show(self):
         """
@@ -80,4 +76,3 @@ class DEM:
         """
         fig = plot_heatmap(self.data)
         fig.show()
-    
