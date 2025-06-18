@@ -65,25 +65,69 @@ class NeuralHeightField(nn.Module):
         z = z * (self.out_range[1] - self.out_range[0]) / 2 + sum(self.out_range) / 2
         return z
 
-    def fit(self, xyz: torch.Tensor, tol: float = 1e-6, max_iters: int = 10000):
+    def forward_with_grad(self, xy):
+        """Forward pass that also returns gradients of height with respect to x,y coordinates.
+
+        Args:
+            xy: Input coordinates of shape (..., 2)
+
+        Returns:
+            Tuple of:
+                z: Height predictions of shape (...)
+                grad_xy: Gradients of height with respect to input coordinates, shape (..., 2)
+        """
+        xy = xy.clone().requires_grad_(True)  # Enable gradient computation
+        z = self.forward(xy)
+        grad_xy = torch.autograd.grad(z.sum(), xy, create_graph=True)[0]
+        return z, grad_xy
+
+    def fit(
+        self, xyz: torch.Tensor, tol: float = 1e-6, max_iters: int = 10000, grad_weight: float = 0.1
+    ):
+        """Fit the neural height field to the given points with gradient regularization.
+
+        Args:
+            xyz: Input points of shape (N, 3) where N is number of points
+            tol: Convergence tolerance for loss change
+            max_iters: Maximum number of iterations
+            grad_weight: Weight for gradient regularization loss (higher values = smoother surface)
+        """
         optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
         xy = xyz.cuda()[:, :2].float()
         z_train = xyz.cuda()[:, 2].float()
-        prev_loss = float("inf")
-        for i in range(max_iters):
-            z_pred = self.forward(xy)
-            loss = torch.nn.functional.mse_loss(z_pred, z_train)
+        prev_height_loss = float("inf")
 
-            # Check for convergence
-            if abs(prev_loss - loss.item()) < tol:
-                print(f"Converged at iteration {i} with loss: {loss.item()}")
+        for i in range(max_iters):
+            # Forward pass with gradients
+            z_pred, grad_xy = self.forward_with_grad(xy)
+
+            # Compute losses
+            losses = {
+                "height": torch.nn.functional.mse_loss(z_pred, z_train),
+                "grad": torch.mean(torch.sum(grad_xy**2, dim=-1)),
+            }
+
+            # Total loss with regularization
+            losses["total"] = losses["height"] + grad_weight * losses["grad"]
+
+            # Check for convergence on height loss
+            if abs(prev_height_loss - losses["height"].item()) < tol:
+                print(f"Converged at iteration {i}")
+                print(
+                    f"Height Loss: {losses['height'].item():.6f}, "
+                    f"Gradient Loss: {losses['grad'].item():.6f}"
+                )
                 break
 
             if i % 100 == 0:
-                print(f"Iteration {i}, Loss: {loss.item()}")
+                print(
+                    f"Iteration {i} | "
+                    f"Height Loss: {losses['height'].item():.6f}, "
+                    f"Gradient Loss: {losses['grad'].item():.6f}"
+                )
 
             optimizer.zero_grad()
-            loss.backward()
+            losses["total"].backward()
             optimizer.step()
 
-            prev_loss = loss.item()
+            prev_height_loss = losses["height"].item()
