@@ -25,7 +25,7 @@ class NeuralHeightField(nn.Module):
         self.out_range = out_range
         self.device = device
 
-        # Choose encoding
+        # Choose encoding 
         if encoding_type == "rff":
             self.encoder = RFFEncoding(in_dim=in_dim, num_frequencies=num_frequencies, scale=scale)
             input_dim = 2 * num_frequencies
@@ -38,7 +38,7 @@ class NeuralHeightField(nn.Module):
                 include_input=include_input,
             )
             input_dim = self.encoder.get_out_dim()
-        elif encoding_type == "sinusoidal":
+        elif encoding_type == "sinusoidal": #should this be removed since it is same as nerf?
             raise NotImplementedError("Use 'rff' or 'nerf' to use Nerfstudio encodings.")
         else:
             raise ValueError(f"Unknown encoding type: {encoding_type}")
