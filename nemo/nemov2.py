@@ -383,8 +383,8 @@ class NEMoV2(nn.Module):
             List of training losses
         """
         # Ensure z is 2D
-        if z.dim() == 1:
-            z = z.unsqueeze(1)
+        # if z.dim() == 1:
+        #     z = z.unsqueeze(1)
 
         # Move data to device
         xy = xy.to(self.device)
@@ -393,18 +393,14 @@ class NEMoV2(nn.Module):
         # Compute scaling parameters
         self.compute_scaling_parameters(xy, z, verbose=verbose)
 
-        # Normalize input data
-        xy_norm = self.normalize_input(xy)
-        z_norm = z  # No normalization for z
-
         # Convert to half precision
-        xy_norm = xy_norm.half()
-        z_norm = z_norm.half()
+        xy = xy.half()
+        z = z.half()
 
         # Setup optimizer with separate learning rates
         optimizer = torch.optim.Adam(
             [
-                {"params": self.encoding.parameters(), "lr": lr * 0.1},
+                {"params": self.encoding.parameters(), "lr": lr},
                 {"params": self.height_net.parameters(), "lr": lr},
             ]
         )
@@ -424,12 +420,12 @@ class NEMoV2(nn.Module):
 
         # Initialize logger if provided
         if logger is not None:
-            logger.start_training(max_epochs, xy_norm.shape[0], batch_size)
+            logger.start_training(max_epochs, xy.shape[0], batch_size)
             logger.log_model_parameters(self)
 
         if verbose:
             print(f"[bold green]Starting training with {max_epochs} epochs...[/bold green]")
-            print(f"[green]Data size:[/green] {xy_norm.shape[0]} points")
+            print(f"[green]Data size:[/green] {xy.shape[0]} points")
             print(f"[green]Batch size:[/green] {batch_size}")
             print(f"[green]Learning rate:[/green] {lr}")
 
@@ -440,13 +436,13 @@ class NEMoV2(nn.Module):
             if logger is not None:
                 logger.start_epoch(epoch)
             # Create batches
-            if batch_size < xy_norm.shape[0]:
-                indices = torch.randperm(xy_norm.shape[0])
-                xy_batch = xy_norm[indices[:batch_size]]
-                z_batch = z_norm[indices[:batch_size]]
+            if batch_size < xy.shape[0]:
+                indices = torch.randperm(xy.shape[0])
+                xy_batch = xy[indices[:batch_size]]
+                z_batch = z[indices[:batch_size]]
             else:
-                xy_batch = xy_norm
-                z_batch = z_norm
+                xy_batch = xy
+                z_batch = z
 
             # Forward pass
             pred = self.forward(xy_batch)
@@ -643,6 +639,12 @@ class NEMoV2(nn.Module):
                 f"Best loss: {self.training_history['best_loss']:.6f} at epoch {self.training_history['best_epoch']}"
             )
             print(f"Final loss: {self.training_history['final_loss']:.6f}")
+
+        # Compute final loss over all data
+        with torch.no_grad():
+            final_pred = self.forward(xy)
+            final_loss = criterion(final_pred, z.squeeze()).item()
+            print(f"Total loss over all data: {final_loss:.6f}")
 
         return losses
 
