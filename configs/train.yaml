@@ -1,0 +1,19 @@
+# Training/fit settings
+lr: 1e-3
+max_epochs: 1000
+batch_size: 10000
+grad_clip: 1.0
+grad_weight: 0.01
+laplacian_weight: 0.001
+patience: 100
+verbose: false
+early_stopping: true
+spatial_method: finite_diff
+enable_spatial: true
+
+# Good to include:
+seed: 42
+device: "cuda"
+amp: true            # enable mixed precision?
+log_every: 50
+ckpt_dir: "runs/${experiment}/ckpts"

@@ -1,6 +1,6 @@
 import wandb
 import torch
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional, Union
 from dataclasses import dataclass
 import time
 
@@ -10,10 +10,7 @@ class TrainingMetrics:
     """Container for training metrics to be logged."""
 
     epoch: int
-    total_loss: float
-    height_loss: float
-    spatial_smoothness_loss: float
-    height_variance_loss: float
+    losses: Dict[str, float]  # Flexible dictionary of loss names and values
     learning_rate: float
     gradient_norm: Optional[float] = None
     memory_usage: Optional[float] = None
@@ -32,7 +29,7 @@ class EvaluationMetrics:
     dataset_size: int
 
 
-class NEMoLogger:
+class Logger:
     """
     Logger class for NEMoV2 training and evaluation using Weights & Biases.
 
@@ -121,13 +118,12 @@ class NEMoLogger:
         Args:
             metrics: TrainingMetrics object containing all metrics to log
         """
-        log_dict = {
-            "training/total_loss": metrics.total_loss,
-            "training/height_loss": metrics.height_loss,
-            "training/spatial_smoothness_loss": metrics.spatial_smoothness_loss,
-            "training/height_variance_loss": metrics.height_variance_loss,
-            "training/learning_rate": metrics.learning_rate,
-        }
+        # Start with learning rate
+        log_dict = {"training/learning_rate": metrics.learning_rate}
+
+        # Dynamically log all losses from the losses dictionary
+        for loss_name, loss_value in metrics.losses.items():
+            log_dict[f"training/{loss_name}"] = loss_value
 
         # Add optional metrics if available
         if metrics.gradient_norm is not None:
@@ -142,9 +138,10 @@ class NEMoLogger:
         # Log to wandb
         wandb.log(log_dict, step=metrics.epoch)
 
-        # Update best loss tracking
-        if metrics.total_loss < self.best_loss:
-            self.best_loss = metrics.total_loss
+        # Update best loss tracking using total_loss if it exists, otherwise use the first loss
+        total_loss = metrics.losses.get("total_loss", next(iter(metrics.losses.values())))
+        if total_loss < self.best_loss:
+            self.best_loss = total_loss
             self.best_epoch = metrics.epoch
 
             wandb.log(
