@@ -134,6 +134,10 @@ class DEM:
         self.x_coords, self.y_coords = np.meshgrid(x_range, y_range)
         # Note: z_coords will be set from the input data in __init__
 
+    @property
+    def shape(self):
+        return self.data.shape
+
     @classmethod
     def from_file(cls, file_path: Union[str, Path], **kwargs) -> "DEM":
         """

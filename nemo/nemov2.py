@@ -114,9 +114,16 @@ class NEMoV2(nn.Module):
             [x_center, y_center], device=self.device, dtype=torch.float16
         )
 
-        # No output scaling - keep z in original range like original NEMo
-        self.output_scale = 1.0
-        self.output_offset = 0.0
+        # Output scaling (scale to [-1, 1] for numerical stability)
+        z_np = z.detach().cpu().numpy()
+        z_min, z_max = z_np.min(), z_np.max()
+
+        # Scale to [-1, 1] range
+        z_center = (z_max + z_min) / 2.0
+        z_range = (z_max - z_min) / 2.0
+
+        self.output_scale = torch.tensor(z_range, device=self.device, dtype=torch.float16)
+        self.output_offset = torch.tensor(z_center, device=self.device, dtype=torch.float16)
 
     def normalize_input(self, xy: torch.Tensor) -> torch.Tensor:
         """Normalize input coordinates to [-1, 1] range like original NEMo."""
@@ -128,6 +135,15 @@ class NEMoV2(nn.Module):
         xy_norm = torch.clamp(xy_norm, -1.0, 1.0)
         return xy_norm
 
+    def normalize_output(self, z: torch.Tensor) -> torch.Tensor:
+        """Normalize output to [-1, 1] range."""
+        if self.output_scale is None:
+            raise ValueError("Output scaling not computed. Call fit() first.")
+
+        z = z.to(self.device)
+        z_norm = (z - self.output_offset) / self.output_scale  # [-1, 1]
+        return z_norm
+
     def denormalize_output(self, z_norm: torch.Tensor) -> torch.Tensor:
         """Denormalize output back to original scale."""
         if self.output_scale is None:
@@ -135,24 +151,18 @@ class NEMoV2(nn.Module):
 
         return z_norm * self.output_scale + self.output_offset
 
-    def forward(self, xy: torch.Tensor) -> torch.Tensor:
+    def forward(self, xy_norm: torch.Tensor) -> torch.Tensor:
         """Forward pass: predict heights from normalized coordinates."""
-        # Normalize input if scaling is available
-        if self.input_scale is not None:
-            xy_norm = self.normalize_input(xy)
-        else:
-            xy_norm = xy
-
         encodings = self.encoding(xy_norm)
-        heights_norm = self.height_net(encodings)
+        z_norm = self.height_net(encodings)
+        return z_norm.squeeze(-1)  # Remove the last dimension to match target shape
 
-        # Denormalize output if scaling is available
-        if self.output_scale is not None:
-            heights = self.denormalize_output(heights_norm)
-        else:
-            heights = heights_norm
-
-        return heights.squeeze(-1)
+    def predict_height(self, xy: torch.Tensor) -> torch.Tensor:
+        """Predict heights from normalized coordinates."""
+        xy_norm = self.normalize_input(xy)
+        z_norm = self.forward(xy_norm)
+        z = self.denormalize_output(z_norm)
+        return z
 
     def fit(
         self,
@@ -194,10 +204,12 @@ class NEMoV2(nn.Module):
 
         # Compute scaling parameters
         self.compute_scaling_parameters(xy, z)
+        xy_norm = self.normalize_input(xy)
+        z_norm = self.normalize_output(z)
 
         # Convert to half precision
-        xy = xy.half()
-        z = z.half()
+        xy_norm = xy_norm.half()
+        z_norm = z_norm.half()
 
         # Setup optimizer with separate learning rates
         optimizer = torch.optim.Adam(
@@ -232,15 +244,23 @@ class NEMoV2(nn.Module):
             # Create batches
             if batch_size < xy.shape[0]:
                 indices = torch.randperm(xy.shape[0])
-                xy_batch = xy[indices[:batch_size]]
-                z_batch = z[indices[:batch_size]]
+                xy_batch_norm = xy_norm[indices[:batch_size]]
+                z_batch_norm = z_norm[indices[:batch_size]]
             else:
-                xy_batch = xy
-                z_batch = z
+                xy_batch_norm = xy_norm
+                z_batch_norm = z_norm
 
             # Forward pass
-            pred = self.forward(xy_batch)
-            height_loss = criterion(pred, z_batch)
+            pred_norm = self.forward(xy_batch_norm)
+            height_loss = criterion(pred_norm, z_batch_norm)
+
+            if torch.isnan(pred_norm).any():
+                print("  [bold red]ERROR: NaN detected in predictions![/bold red]")
+            if torch.isinf(pred_norm).any():
+                print("  [bold red]ERROR: Inf detected in predictions![/bold red]")
+
+            # print(f"xy_batch.shape: {xy_batch.shape}, z_batch.shape: {z_batch.shape}")
+            # print(f"height_loss: {height_loss}")
 
             losses = {
                 "height_loss": height_loss,
@@ -334,10 +354,24 @@ class NEMoV2(nn.Module):
             )
             logger.log_training_completion(final_loss, len(losses))
 
-        # Compute final loss over all data
+        # Compute final loss over all data in batches to avoid memory issues
         with torch.no_grad():
-            final_pred = self.forward(xy)
-            final_loss = criterion(final_pred, z).item()
+            final_loss = 0.0
+            batch_size_final = 10000  # Use smaller batch size for final evaluation
+            n_batches = (len(xy_norm) + batch_size_final - 1) // batch_size_final
+
+            for i in range(n_batches):
+                start_idx = i * batch_size_final
+                end_idx = min((i + 1) * batch_size_final, len(xy_norm))
+
+                xy_batch = xy_norm[start_idx:end_idx]
+                z_batch = z_norm[start_idx:end_idx]
+
+                z_pred_batch = self.forward(xy_batch)
+                batch_loss = criterion(z_pred_batch, z_batch).item()
+                final_loss += batch_loss * (end_idx - start_idx)
+
+            final_loss /= len(xy_norm)
             print(f"Total loss over all data: {final_loss:.6f}")
 
     def save_model(self, filepath: str, logger=None):
