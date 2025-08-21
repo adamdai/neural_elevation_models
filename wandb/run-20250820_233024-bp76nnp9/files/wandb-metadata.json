@@ -1,0 +1,42 @@
+{
+  "os": "Linux-6.8.0-64-generic-x86_64-with-glibc2.39",
+  "python": "CPython 3.10.18",
+  "startedAt": "2025-08-21T06:30:24.271927Z",
+  "program": "/home/addai/Projects/neural_elevation_models/tests/test_logger.py",
+  "codePath": "tests/test_logger.py",
+  "git": {
+    "remote": "git@github.com:adamdai/neural_elevation_models.git",
+    "commit": "b7742104c0e60fec6632c96d02f19d110303b289"
+  },
+  "root": "/home/addai/Projects/neural_elevation_models",
+  "host": "navlab-ws2",
+  "executable": "/home/addai/miniconda3/envs/nemo/bin/python",
+  "codePathLocal": "tests/test_logger.py",
+  "cpu_count": 20,
+  "cpu_count_logical": 28,
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "3936290357248",
+      "used": "3526145228800"
+    }
+  },
+  "memory": {
+    "total": "67146276864"
+  },
+  "cpu": {
+    "count": 20,
+    "countLogical": 28
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA GeForce RTX 4090",
+      "memoryTotal": "25757220864",
+      "cudaCores": 16384,
+      "architecture": "Ada",
+      "uuid": "GPU-f5f3920a-8373-dbbf-e9b7-acf2accf1c8d"
+    }
+  ],
+  "cudaVersion": "12.8"
+}

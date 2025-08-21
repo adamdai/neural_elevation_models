@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 
 from nemo.spatial_distortions import SceneContraction
 from nemo.util.plotting import plot_surface
-from nemo.util import grid_2d
+from nemo.utils import grid_2d
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -59,16 +59,16 @@ class Nemo:
 
     def get_heights(self, positions):
         """Query heights"""
-        positions = self.spatial_distortion(positions)
-        positions = (positions + 2.0) / 4.0
+        # positions = self.spatial_distortion(positions)
+        # positions = (positions + 2.0) / 4.0
         encs = self.encoding(positions[:, :2])
         heights = self.height_net(encs)
         return heights
 
     def get_heights_with_grad(self, positions):
         """Query heights and gradients"""
-        positions = self.spatial_distortion(positions)
-        positions = (positions + 2.0) / 4.0
+        positions = self.spatial_distortion(positions)  # -2 to 2
+        positions = (positions + 2.0) / 4.0  # -1 to 1
         encs = self.encoding(positions[:, :2])
         heights = self.height_net(encs)
         grad = torch.autograd.grad(heights.sum(), positions, create_graph=True)[0]
