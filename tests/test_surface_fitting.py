@@ -8,7 +8,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 # Load the lunar DEM data
-dem = DEM.from_file("../../data/Moon_Map_01_0_rep0.dat")
+dem = DEM.from_file("data/Moon_Map_01_0_rep0.dat")
 
 # Downsample to manageable size for testing
 dem_ds = dem.downsample(1)  # Reduce from 180x180 to 45x45
@@ -51,4 +51,6 @@ pred_grid[:, :, 2] = (
     pred_z.detach().cpu().numpy().reshape(dem_ds.data.shape[0], dem_ds.data.shape[1])
 )
 
-plot_surface(pred_grid)
+fig = plot_surface(pred_grid)
+fig.write_image("fitted_surface.png")
+fig.write_html("fitted_surface.html")
