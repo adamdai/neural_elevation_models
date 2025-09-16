@@ -2,6 +2,7 @@ data/
 results/
 wandb/
 results/
+output/
 .vscode/
 
 # Byte-compiled / optimized / DLL files
