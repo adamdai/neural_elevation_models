@@ -21,7 +21,7 @@ try:
 except ImportError:
     HAS_PIL = False
 
-from nemo.util.plotting import plot_heatmap
+from nemo.util.plotting import plot_heatmap, plot_surface
 
 
 class DEM:
@@ -371,12 +371,8 @@ class DEM:
         DEM
             Downsampled DEM object.
         """
-        # Downsample the 3D XYZ data
         data_ds = self.data[::factor, ::factor, :]
-
-        # Calculate new extent
         new_extent = (self.extent[0] / factor, self.extent[1] / factor)
-
         dem = DEM(data_ds, extent=new_extent, metadata=self.metadata)
         return dem
 
@@ -424,7 +420,20 @@ class DEM:
         Display a heatmap visualization of the DEM.
         """
         fig = plot_heatmap(self.z_coords)
-        fig.show()
+        return fig
+
+    def surface_plot(self):
+        """
+        Plot the surface of the DEM.
+        """
+        if self.N > 500:
+            downsample_factor = self.N // 500
+            downsampled_data = self.data[::downsample_factor, ::downsample_factor]
+            print(f"Downsampling DEM from {self.shape} to {downsampled_data.shape} for plotting")
+            fig = plot_surface(downsampled_data)
+        else:
+            fig = plot_surface(self.data)
+        return fig
 
     def __repr__(self):
         return f"DEM(shape=({self.N}, {self.M}, 3), extent={self.extent}, source={self.metadata.get('source', 'unknown')})"

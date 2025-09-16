@@ -1,0 +1,7 @@
+# NEMoV2 Configuration
+# This file defines the overall model configuration and references built-in encoding/network configs
+
+# Model selection
+model:
+  encoding_config: "hashgrid_nerfacto"
+  network_config: "network_nerfacto" 

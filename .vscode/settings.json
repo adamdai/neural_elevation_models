@@ -3,4 +3,7 @@
   "python.analysis.extraPaths": [
       "/home/addai/NeRF/nerfstudio"
   ],
+  "files.watcherExclude": {
+    "/results": true
+  },
 }

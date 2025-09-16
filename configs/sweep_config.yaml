@@ -1,0 +1,26 @@
+# Hydra Sweep Configuration - Default values and sweep parameters
+# This file defines default values and sweep ranges for all parameters
+
+# Encoding configurations
+encoding:
+  otype: "HashGrid"  # Fixed for now, can be made variable later
+  n_levels: 6  # Default: 6, Sweep: [4, 6, 8, 10]
+  n_features_per_level: 2  # Default: 2, Sweep: [2, 4, 8]
+  log2_hashmap_size: 18  # Default: 18, Sweep: [16, 18, 19, 20]
+  base_resolution: 16  # Default: 16, Sweep: [8, 16, 32]
+  per_level_scale: 1.5  # Default: 1.5, Sweep: [1.2, 1.5, 1.8, 2.0]
+
+# Network configurations
+network:
+  otype: "FullyFusedMLP"  # Default: "FullyFusedMLP", Sweep: ["FullyFusedMLP", "CutlassMLP"]
+  activation: "ReLU"  # Default: "ReLU", Sweep: ["ReLU", "GELU", "SiLU"]
+  output_activation: "None"
+  n_neurons: 64  # Default: 64, Sweep: [32, 64, 128, 256]
+  n_hidden_layers: 3  # Default: 3, Sweep: [2, 3, 4, 5]
+  
+
+# Training hyperparameters
+training:
+  learning_rate: 1e-3  # Default: 1e-3, Sweep: [1e-4, 5e-4, 1e-3, 5e-3]
+  batch_size: 10000  # Default: 10000, Sweep: [5000, 10000, 20000, 50000]
+  max_epochs: 2000  # Default: 2000, Sweep: [1000, 2000, 5000]

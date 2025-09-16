@@ -83,7 +83,15 @@ class Logger:
 
     def _log_config(self):
         """Log the initial configuration."""
-        wandb.config.update(self.config)
+        # Only update config if it hasn't been set yet
+        if not hasattr(wandb.config, "_initialized") or not wandb.config._initialized:
+            try:
+                wandb.config.update(self.config)
+                wandb.config._initialized = True
+            except Exception as e:
+                print(f"Warning: Could not update wandb config: {e}")
+                # Mark as initialized to avoid repeated attempts
+                wandb.config._initialized = True
 
     def start_training(self, max_epochs: int, data_size: int, batch_size: int):
         """Log the start of training."""

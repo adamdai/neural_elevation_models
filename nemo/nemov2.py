@@ -6,8 +6,13 @@ from rich import print
 from tqdm import tqdm
 import gc
 import time
+import yaml
+import numpy as np
+from pathlib import Path
 
 from nemo.logger import Logger
+from nemo.util.paths import config_dir
+from nemo.util.plotting import plot_surface
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -169,6 +174,7 @@ class NEMoV2(nn.Module):
         xy: torch.Tensor,
         z: torch.Tensor,
         lr: float = 1e-3,
+        loss_criterion: str = "mse",  # "mse" or "mae"
         max_epochs: int = 1000,
         batch_size: int = 10000,
         grad_clip: float = 1.0,
@@ -226,7 +232,7 @@ class NEMoV2(nn.Module):
         criterion = nn.MSELoss()
 
         # Training variables
-        losses = []
+        epoch_losses = []  # List to store loss values for each epoch
         best_loss = float("inf")
         patience_counter = 0
 
@@ -267,6 +273,9 @@ class NEMoV2(nn.Module):
                 "total_loss": height_loss,
             }
             total_loss = losses["total_loss"]
+            
+            # Store the total loss value for this epoch
+            epoch_losses.append(total_loss.item())
 
             # Log metrics with wandb if logger is provided
             if logger is not None:
@@ -374,7 +383,13 @@ class NEMoV2(nn.Module):
             final_loss /= len(xy_norm)
             print(f"Total loss over all data: {final_loss:.6f}")
 
-    def save_model(self, filepath: str, logger=None):
+        # Store final loss in training history
+        self.training_history["final_loss"] = final_loss
+        
+        # Return the list of losses for each epoch
+        return epoch_losses
+
+    def save_model(self, filepath: str):
         """Save the trained model."""
         torch.save(
             {
@@ -388,19 +403,9 @@ class NEMoV2(nn.Module):
             },
             filepath,
         )
-
-        # Log model saving with wandb if logger is provided
-        if logger is not None:
-            import os
-
-            model_size_mb = (
-                os.path.getsize(filepath) / 1024**2 if os.path.exists(filepath) else None
-            )
-            logger.log_model_save(filepath, model_size_mb)
-
         print(f"Model saved to {filepath}")
 
-    def load_model(self, filepath: str, logger=None):
+    def load_model(self, filepath: str):
         """Load a trained model."""
         checkpoint = torch.load(filepath, map_location=self.device)
 
@@ -411,11 +416,6 @@ class NEMoV2(nn.Module):
         self.output_scale = checkpoint["output_scale"]
         self.output_offset = checkpoint["output_offset"]
         self.training_history = checkpoint["training_history"]
-
-        # Log model loading with wandb if logger is provided
-        if logger is not None:
-            logger.log_model_load(filepath)
-
         print(f"Model loaded from {filepath}")
 
     def __repr__(self):
@@ -424,3 +424,116 @@ class NEMoV2(nn.Module):
             f"network={self.height_net.__class__.__name__}, "
             f"device={self.device})"
         )
+
+    def surface_plot(self, xy: torch.Tensor, dem_data: np.ndarray):
+        """Plot the surface of the model."""
+        pred_z = self.predict_height(xy)
+        pred_grid = dem_data.copy()
+        pred_grid[:, :, 2] = pred_z.detach().cpu().numpy().reshape(dem_data.shape[:2])
+        return plot_surface(pred_grid)
+
+    @classmethod
+    def from_config(cls, config_path: str, **overrides):
+        """
+        Create a NEMoV2 instance from a configuration file.
+
+        Args:
+            config_path: Path to the YAML configuration file
+            **overrides: Override any config values
+
+        Returns:
+            NEMoV2 instance configured according to the config file
+        """
+        # Load configuration
+        config = cls._load_config(config_path)
+
+        # Apply overrides
+        config = cls._apply_overrides(config, overrides)
+
+        # Get device
+        device = config.get("data", {}).get("device", "auto")
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # Get encoding and network configs
+        encoding_config = cls._get_encoding_config(config)
+        network_config = cls._get_network_config(config)
+
+        # Create instance
+        return cls(
+            input_bounds=config.get("data", {}).get("input_bounds"),
+            output_bounds=config.get("data", {}).get("output_bounds"),
+            encoding_config=encoding_config,
+            network_config=network_config,
+            device=device,
+        )
+
+    @staticmethod
+    def _load_config(config_path: str) -> Dict:
+        """Load configuration from YAML file."""
+        config_file = Path(config_path)
+        if not config_file.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        with open(config_file, "r") as f:
+            config = yaml.safe_load(f)
+
+        return config
+
+    @staticmethod
+    def _apply_overrides(config: Dict, overrides: Dict) -> Dict:
+        """Apply overrides to configuration."""
+        import copy
+
+        config = copy.deepcopy(config)
+
+        for key, value in overrides.items():
+            if "." in key:
+                # Handle nested keys like "training.learning_rate"
+                keys = key.split(".")
+                current = config
+                for k in keys[:-1]:
+                    if k not in current:
+                        current[k] = {}
+                    current = current[k]
+                current[keys[-1]] = value
+            else:
+                config[key] = value
+
+        return config
+
+    @staticmethod
+    def _get_encoding_config(config: Dict) -> Dict:
+        """Get encoding configuration from configs folder."""
+        encoding_name = config.get("model", {}).get("encoding_config", "standard")
+
+        # Load encoding config from file
+        encoding_file = config_dir() / "encoding" / f"{encoding_name}.yaml"
+
+        if not encoding_file.exists():
+            print(f"Warning: Encoding config '{encoding_name}' not found, using 'default'")
+            encoding_name = "default"
+            encoding_file = config_dir() / "encoding" / f"{encoding_name}.yaml"
+
+        with open(encoding_file, "r") as f:
+            encoding_config = yaml.safe_load(f)
+
+        return encoding_config
+
+    @staticmethod
+    def _get_network_config(config: Dict) -> Dict:
+        """Get network configuration from configs folder."""
+        network_name = config.get("model", {}).get("network_config", "default")
+
+        # Load network config from file
+        network_file = config_dir() / "network" / f"{network_name}.yaml"
+
+        if not network_file.exists():
+            print(f"Warning: Network config '{network_name}' not found, using 'default'")
+            network_name = "default"
+            network_file = config_dir() / "network" / f"{network_name}.yaml"
+
+        with open(network_file, "r") as f:
+            network_config = yaml.safe_load(f)
+
+        return network_config

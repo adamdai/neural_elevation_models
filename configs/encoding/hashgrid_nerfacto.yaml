@@ -1,0 +1,11 @@
+# Last parameters from previous NEMo
+
+base_resolution: 16
+hash: CoherentPrime
+interpolation: Linear
+log2_hashmap_size: 19 
+n_features_per_level: 2
+n_levels: 16
+otype: Grid
+per_level_scale: 1.3819128274917603 
+type: 'Hash'

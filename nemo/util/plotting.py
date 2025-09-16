@@ -29,6 +29,13 @@ def plot_surface(
     """
     if fig is None:
         fig = go.Figure()
+    # Downsample large grids to 500x500 for plotting
+    M, N = grid.shape[:2]
+    if M > 500 or N > 500:
+        downsample_factor_M = max(1, M // 500)
+        downsample_factor_N = max(1, N // 500)
+        grid = grid[::downsample_factor_M, ::downsample_factor_N, :]
+        print(f"Downsampling grid from {(M, N)} to {grid.shape[:2]} for plotting")
     fig.add_trace(
         go.Surface(
             x=grid[:, :, 0],
