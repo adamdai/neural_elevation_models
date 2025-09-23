@@ -437,3 +437,21 @@ class DEM:
 
     def __repr__(self):
         return f"DEM(shape=({self.N}, {self.M}, 3), extent={self.extent}, source={self.metadata.get('source', 'unknown')})"
+
+
+class DEMLite:
+    def __init__(self, z, transform, crs, nodata=None, metadata=None):
+        self.z = z  # 2D array (or dask array)
+        self.transform = transform  # rasterio Affine
+        self.crs = crs
+        self.nodata = nodata
+        self.metadata = metadata or {}
+
+    @classmethod
+    def from_geotiff(cls, path):
+        import rasterio
+
+        src = rasterio.open(path)
+        # Option A: read coarsened (safe)
+        z = src.read(1)  # careful: might be huge; see Section 3 for safer patterns
+        return cls(z, src.transform, src.crs, src.nodata, {"bounds": src.bounds})
