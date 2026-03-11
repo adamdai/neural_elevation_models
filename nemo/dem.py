@@ -426,14 +426,7 @@ class DEM:
         """
         Plot the surface of the DEM.
         """
-        if self.N > 500:
-            downsample_factor = self.N // 500
-            downsampled_data = self.data[::downsample_factor, ::downsample_factor]
-            print(f"Downsampling DEM from {self.shape} to {downsampled_data.shape} for plotting")
-            fig = plot_surface(downsampled_data)
-        else:
-            fig = plot_surface(self.data)
-        return fig
+        return plot_surface(self.data)
 
     def __repr__(self):
         return f"DEM(shape=({self.N}, {self.M}, 3), extent={self.extent}, source={self.metadata.get('source', 'unknown')})"
