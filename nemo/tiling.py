@@ -52,12 +52,25 @@ class TiledHeightField(HeightField):
         fitter: TorchHeightFieldFitter | None = None,
         fit_config: TorchFitConfig | None = None,
     ) -> None:
-        super().__init__(config.bounds)
+        super().__init__(config.bounds, input_normalization="none")
         self.config = config
         self.tile_bounds = build_tile_bounds(config)
         self.fields = torch.nn.ModuleList([field_factory(tile_bounds) for tile_bounds in self.tile_bounds])
         self.fitter = fitter or TorchHeightFieldFitter()
         self.fit_config = fit_config or TorchFitConfig()
+        self.normalization_metadata = {
+            **self.normalization_metadata,
+            "tile_bounds": [
+                {
+                    "x": [float(tile_bounds[0][0]), float(tile_bounds[0][1])],
+                    "y": [float(tile_bounds[1][0]), float(tile_bounds[1][1])],
+                }
+                for tile_bounds in self.tile_bounds
+            ],
+            "tile_field_normalization": [
+                field.normalization_metadata for field in self.fields
+            ],
+        }
 
     def _tile_mask(self, tile_bounds: Bounds, xy: Tensor) -> Tensor:
         x0 = tile_bounds[0][0] - self.config.overlap[0] * 0.5
@@ -82,14 +95,21 @@ class TiledHeightField(HeightField):
         wy = torch.clamp(1.0 - dy, min=0.0)
         return (wx * wy).unsqueeze(-1)
 
-    def fit(self, xy: Tensor, z: Tensor) -> "TiledHeightField":
+    def fit(self, xy: Tensor, z: Tensor, grad_targets: Tensor | None = None) -> "TiledHeightField":
         xy = as_tensor(xy)
         z = as_targets(z)
+        if grad_targets is not None:
+            grad_targets = torch.as_tensor(grad_targets, dtype=torch.float32, device=xy.device)
+            if grad_targets.ndim != 2 or grad_targets.shape[-1] != 2:
+                raise ValueError("Expected grad_targets to have shape (N, 2).")
+            if grad_targets.shape[0] != xy.shape[0]:
+                raise ValueError("grad_targets must have the same number of samples as xy.")
         for tile_bounds, field in zip(self.tile_bounds, self.fields):
             mask = self._tile_mask(tile_bounds, xy)
             if not torch.any(mask):
                 continue
-            self.fitter.fit(field, xy[mask], z[mask], config=self.fit_config)
+            tile_grad_targets = grad_targets[mask] if grad_targets is not None else None
+            self.fitter.fit(field, xy[mask], z[mask], grad_targets=tile_grad_targets, config=self.fit_config)
         return self
 
     def h(self, xy: Tensor) -> Tensor:

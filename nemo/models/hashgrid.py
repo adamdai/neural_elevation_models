@@ -26,7 +26,11 @@ class TCNNHashGridHeightField(HeightField):
             raise ImportError(
                 "tinycudann is not installed. Install the optional `nemo[tcnn]` extras."
             )
-        super().__init__(bounds)
+        super().__init__(
+            bounds,
+            input_normalization="zero_to_one",
+            output_normalization="standardize",
+        )
         encoding_config = encoding_config or {
             "otype": "HashGrid",
             "n_levels": 16,
@@ -42,6 +46,8 @@ class TCNNHashGridHeightField(HeightField):
             "n_neurons": 64,
             "n_hidden_layers": 2,
         }
+        self.encoding_config = dict(encoding_config)
+        self.network_config = dict(network_config)
         self.encoding = tcnn.Encoding(n_input_dims=2, encoding_config=encoding_config)
         self.network = tcnn.Network(
             n_input_dims=self.encoding.n_output_dims,
@@ -49,7 +55,10 @@ class TCNNHashGridHeightField(HeightField):
             network_config=network_config,
         )
 
-    def h(self, xy: Tensor) -> Tensor:
-        xy_norm = self.normalizer.normalize_zero_to_one(xy)
+    def training_predictions(self, xy: Tensor) -> Tensor:
+        xy_norm = self.normalize_inputs(xy)
         encoded = self.encoding(xy_norm)
         return self.network(encoded)
+
+    def h(self, xy: Tensor) -> Tensor:
+        return self.denormalize_outputs(self.training_predictions(xy))
