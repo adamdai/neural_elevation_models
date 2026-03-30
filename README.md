@@ -1,79 +1,54 @@
-# Neural Elevation Models (NEMo) for Terrain Mapping and Path Planning
+# Neural Elevation Models
 
-Code for Neural Elevation Models (NEMo), and framework for terrain mapping and path planning. 
-This repo contains code for loading trained NEMos and performing path planning on them.
-The code for NEMo training can be found [here](https://github.com/Stanford-NavLab/nerfstudio/tree/adam/terrain).
-<p align="center">
-<img src='images/nemo_overview.png' width="1000">
-</p>
+Fresh restart of the NEMo codebase around a smaller core abstraction:
 
-Terrain images are collected which are used to train the NEMo. We use simulated environments in Unreal Engine with [AirSim](https://microsoft.github.io/AirSim/) to run validation of planned paths.  
+- `Nemo` is the user-facing entry point for fitting and querying a neural height field `z = h(x, y)`.
+- Implementations are pluggable and share a common interface for height and gradient evaluation.
+- Fitting is configurable and separated from the model definition.
+- Large DEMs can be handled with overlapping local tiles.
 
-Paper: https://arxiv.org/abs/2405.15227 
+## Current Layout
+
+```text
+nemo/
+  baselines.py        # Simple base surfaces used by residual models
+  fit.py              # Generic torch fitter and fit configuration
+  height_field.py     # Abstract height-field interface
+  nemo.py             # User-facing Nemo wrapper/factory
+  tiling.py           # Overlapping local tile composition
+  models/
+    residual_mlp.py   # Baseline 1: residual MLP over normalized coordinates
+    hashgrid.py       # tiny-cuda-nn hash-grid implementation
+tests/
 ```
-@article{dai2024neural,
-  title={Neural Elevation Models for Terrain Mapping and Path Planning},
-  author={Dai, Adam and Gupta, Shubh and Gao, Grace},
-  journal={arXiv preprint arXiv:2405.15227},
-  year={2024}
-}
+
+## Example
+
+```python
+import torch
+from nemo import Nemo, PlaneBaseline, TorchFitConfig
+
+xy = torch.rand(4096, 2) * 2.0 - 1.0
+z = (
+    0.2 * xy[:, :1]
+    - 0.1 * xy[:, 1:2]
+    + 0.05 * torch.sin(3.0 * xy[:, :1]) * torch.cos(2.0 * xy[:, 1:2])
+)
+
+nemo = Nemo.residual_mlp(
+    bounds=((-1.0, 1.0), (-1.0, 1.0)),
+    baseline=PlaneBaseline(),
+    hidden_dim=128,
+    depth=4,
+)
+
+nemo.fit(xy, z, fit_config=TorchFitConfig(iterations=800, lr=1e-3))
+height = nemo.h(torch.tensor([[0.1, -0.3]]))
+gradient = nemo.grad(torch.tensor([[0.1, -0.3]]))
 ```
-(Extended RA-L version in preparation)
 
-## Setup
+## Notes
 
-Clone the GitHub repository:
-
-    git clone https://github.com/adamdai/neural_elevation_models.git
-
-Create and activate conda environment:
-
-    conda create -n nemo python=3.8   
-    conda activate nemo
-    
-Install dependencies:
-
-    cd neural_elevation_models
-    pip install -r requirements.txt
-    pip install -e .
-
-Install pytorch and cuda-toolkit:
-
-    pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
-    conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
-
-Install tiny-cuda-nn:
-
-    pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
-
-Install GDAL (for working with `.tif` DEMs):
-
-    conda install -c conda-forge gdal
-
-(Developed and tested with Ubuntu 20.04/22.04 and Windows 10)
-
-## Data
-
-Download the data folder from [this link](https://drive.google.com/drive/folders/1SYb95B8LTitj2U5j3_VF_ZMr46UKhYDT?usp=sharing) and place it in the repo.
-```
-data/
-|-- lunar/
-|-- kt22/
-|   |-- colmap_points3D.txt
-|-- redrocks/
-|   |-- DEM32-DroneMapper.tif
-|   |-- colmap_points3D.txt
-```
-These files are used for DEM comparison to COLMAP and ground truth.
-
-## Models
-
-Weights of trained height networks for the KT-22, Red Rocks, AirSim Mountains, and Unreal Moon scenes can be found under the `models` folder. 
-
-
-## Path Planning
-
-The script `nemo_planning.py` loads a trained NEMo and performs path planning via A* initialization then continuous path optimization.
-For AirSim environments, it generates a `path.npy` file which can then be used by the `car_path_track.py` scripts in [AirSim-Data-Collection](https://github.com/adamdai/AirSim-Data-Collection) 
-to execute the path in simulation.
-
+- `ResidualMLPHeightField` normalizes coordinates into `[-1, 1]^2` and learns a residual on top of a configurable baseline.
+- `TCNNHashGridHeightField` is optional and requires `tinycudann`.
+- `TiledHeightField` fits overlapping local models and blends them smoothly at inference time.

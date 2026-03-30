@@ -1,154 +1,110 @@
+from __future__ import annotations
+
+from typing import Any, Callable
+
 import torch
-import torch.nn as nn
-import tinycudann as tcnn
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from torch import Tensor
 
-from nemo.spatial_distortions import SceneContraction
-from nemo.util.plotting import plot_surface
-from nemo.utils import grid_2d
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+from nemo.baselines import BaselineSurface
+from nemo.fit import TorchFitConfig, TorchHeightFieldFitter
+from nemo.height_field import Bounds, HeightField, as_targets, as_tensor
+from nemo.models.hashgrid import TCNNHashGridHeightField
+from nemo.models.residual_mlp import ResidualMLPHeightField
+from nemo.tiling import TileConfig, TiledHeightField
 
 
-# TODO: should inherit from nn.Module?
 class Nemo:
-    def __init__(self, encs_pth=None, mlp_pth=None):
-        self.encoding = tcnn.Encoding(
-            n_input_dims=2,
-            encoding_config={
-                "otype": "HashGrid",
-                "n_levels": 8,
-                "n_features_per_level": 8,
-                "log2_hashmap_size": 19,
-                "base_resolution": 16,
-                "per_level_scale": 1.2599210739135742,
-                "interpolation": "Smoothstep",
-            },
+    """User-facing wrapper around a parameterizable neural height field."""
+
+    def __init__(
+        self,
+        field: HeightField,
+        *,
+        fitter: TorchHeightFieldFitter | None = None,
+    ) -> None:
+        self.field = field
+        self.fitter = fitter or TorchHeightFieldFitter()
+
+    @classmethod
+    def residual_mlp(
+        cls,
+        *,
+        bounds: Bounds,
+        baseline: BaselineSurface | None = None,
+        hidden_dim: int = 128,
+        depth: int = 4,
+        fitter: TorchHeightFieldFitter | None = None,
+    ) -> "Nemo":
+        field = ResidualMLPHeightField(
+            bounds=bounds,
+            baseline=baseline,
+            hidden_dim=hidden_dim,
+            depth=depth,
         )
-        tot_out_dims_2d = self.encoding.n_output_dims
+        return cls(field, fitter=fitter)
 
-        self.height_net = tcnn.Network(
-            n_input_dims=tot_out_dims_2d,
-            n_output_dims=1,
-            network_config={
-                "otype": "CutlassMLP",
-                "activation": "ReLU",
-                "output_activation": "None",
-                "n_neurons": 256,
-                "n_hidden_layers": 3,
-            },
+    @classmethod
+    def hashgrid(
+        cls,
+        *,
+        bounds: Bounds,
+        encoding_config: dict[str, Any] | None = None,
+        network_config: dict[str, Any] | None = None,
+        fitter: TorchHeightFieldFitter | None = None,
+    ) -> "Nemo":
+        field = TCNNHashGridHeightField(
+            bounds=bounds,
+            encoding_config=encoding_config,
+            network_config=network_config,
         )
+        return cls(field, fitter=fitter)
 
-        self.spatial_distortion = SceneContraction()
-
-        if encs_pth is not None and mlp_pth is not None:
-            self.load_weights(encs_pth, mlp_pth)
-
-        # TODO: add xyz scaling
-        self.x_scale = None
-        self.y_scale = None
-        self.z_scale = None
-
-    def load_weights(self, encs_pth, mlp_pth):
-        """Load weights for hashgrid encoding and MLP"""
-        self.encoding.load_state_dict(torch.load(encs_pth))
-        self.encoding.to(device)
-        self.height_net.load_state_dict(torch.load(mlp_pth))
-        self.height_net.to(device)
-
-    def get_heights(self, positions):
-        """Query heights"""
-        # positions = self.spatial_distortion(positions)
-        # positions = (positions + 2.0) / 4.0
-        encs = self.encoding(positions[:, :2])
-        heights = self.height_net(encs)
-        return heights
-
-    def get_heights_with_grad(self, positions):
-        """Query heights and gradients"""
-        positions = self.spatial_distortion(positions)  # -2 to 2
-        positions = (positions + 2.0) / 4.0  # -1 to 1
-        encs = self.encoding(positions[:, :2])
-        heights = self.height_net(encs)
-        grad = torch.autograd.grad(heights.sum(), positions, create_graph=True)[0]
-        return heights, grad[:, :2]
-
-    def fit(self, xy, z, lr=1e-5, iters=5000):
-        """Fit to (x,y) and z data
-
-        xy : (N, 2)
-        z : (N, 1)
-
-        """
-        # Loss function
-        criterion = nn.MSELoss()
-
-        # Optimizer
-        optimizer = torch.optim.Adam(
-            [{"params": self.encoding.parameters()}, {"params": self.height_net.parameters()}],
-            lr=lr,
+    @classmethod
+    def tiled(
+        cls,
+        *,
+        tile_config: TileConfig,
+        field_factory: Callable[[Bounds], HeightField],
+        fitter: TorchHeightFieldFitter | None = None,
+        fit_config: TorchFitConfig | None = None,
+    ) -> "Nemo":
+        field = TiledHeightField(
+            config=tile_config,
+            field_factory=field_factory,
+            fitter=fitter,
+            fit_config=fit_config,
         )
+        return cls(field, fitter=fitter)
 
-        # Convert the data half precision to match network
-        xy = xy.half()
-        z = z.half()
+    def fit(
+        self,
+        xy: Tensor,
+        z: Tensor,
+        *,
+        fit_config: TorchFitConfig | None = None,
+    ) -> "Nemo":
+        if hasattr(self.field, "fit") and isinstance(self.field, TiledHeightField):
+            self.field.fit(xy, z)
+        else:
+            self.fitter.fit(self.field, xy, z, config=fit_config)
+        return self
 
-        # Train the network
-        for step in range(iters):
-            # Forward pass
-            pred = self.get_heights(xy)
+    def h(self, xy: Tensor) -> Tensor:
+        xy = as_tensor(xy, device=self.device)
+        with torch.no_grad():
+            return self.field.h(xy)
 
-            # Compute loss
-            loss = criterion(pred, z)
+    def grad(self, xy: Tensor) -> Tensor:
+        xy = as_tensor(xy, device=self.device)
+        return self.field.grad(xy)
 
-            # Backward pass
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+    def evaluate(self, xy: Tensor) -> Tensor:
+        return self.h(xy)
 
-            # Print loss every 500 steps
-            if step % 500 == 0:
-                print(f"Step {step}, Loss {loss.item()}")
+    @property
+    def device(self) -> torch.device:
+        return next(self.field.parameters(), torch.empty(0, device=torch.device("cpu"))).device
 
-    def plot(self, N=64, bounds=(-1.0, 1.0, -1.0, 1)):
-        """Surface plot"""
-        xs = torch.linspace(bounds[0], bounds[1], N, device=device)
-        ys = torch.linspace(bounds[2], bounds[3], N, device=device)
-        XY_grid = torch.meshgrid(xs, ys, indexing="xy")
-        XY_grid = torch.stack(XY_grid, dim=-1)
-        positions = XY_grid.reshape(-1, 2)
-        heights = self.get_heights(positions)
-
-        z_grid = heights.reshape(N, N).detach().cpu().numpy()
-        x_grid = XY_grid[:, :, 0].detach().cpu().numpy()
-        y_grid = XY_grid[:, :, 1].detach().cpu().numpy()
-
-        fig = plot_surface(x_grid, y_grid, z_grid, showscale=False)
-        return fig
-
-    def plot_grads(self, N=64, bounds=(-1.0, 1.0, -1.0, 1), clip=None):
-        """Surface plot"""
-        # xs = torch.linspace(bounds[0], bounds[1], N, device=device)
-        # ys = torch.linspace(bounds[2], bounds[3], N, device=device)
-        # XY_grid = torch.meshgrid(xs, ys, indexing='xy')
-        # XY_grid = torch.stack(XY_grid, dim=-1)
-        # positions = XY_grid.reshape(-1, 2)
-        positions, XY_grid = grid_2d(N, bounds)
-        positions.requires_grad = True
-        _, grad = self.get_heights_with_grad(positions)
-
-        x_grad = grad[:, 0].reshape(N, N).detach().cpu().numpy()
-        y_grad = grad[:, 1].reshape(N, N).detach().cpu().numpy()
-
-        if clip:
-            x_grad = x_grad.clip(-clip, clip)
-            y_grad = y_grad.clip(-clip, clip)
-
-        fig = make_subplots(
-            rows=1, cols=2, subplot_titles=("X Gradient", "Y Gradient"), horizontal_spacing=0.15
-        )
-        fig.add_trace(go.Heatmap(z=x_grad, colorbar=dict(len=1.05, x=0.44, y=0.5)), row=1, col=1)
-        fig.add_trace(go.Heatmap(z=y_grad, colorbar=dict(len=1.05, x=1.01, y=0.5)), row=1, col=2)
-        fig.update_layout(width=1300, height=600, scene_aspectmode="data")
-        fig.show()
+    def to(self, device: torch.device | str) -> "Nemo":
+        self.field.to(device)
+        return self

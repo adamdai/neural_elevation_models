@@ -1,54 +1,31 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "nemo"
-version = "0.1.0"
-description = "Neural Elevation Models"
+version = "0.2.0"
+description = "Neural elevation models for height-field fitting."
 readme = "README.md"
-authors = [
-    {name = "Adam Dai", email = "adai@stanford.edu"},
-]
+authors = [{ name = "Adam Dai" }]
 license = "MIT"
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research",
-    "Topic :: Scientific/Engineering :: Robotics",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-]
 requires-python = ">=3.10"
 dependencies = [
-    "numpy",
-    "torch",
-    "torchvision",
-    "opencv-python",
-    "Pillow",
-    "matplotlib",
-    "tqdm",
-    "pyyaml",
-    "viser",
-    "munch",
-    "scipy",
-    "open3d",
-    "plyfile",
-    "timm",
-    "opt-einsum",
-    "imageio",
-    "ipykernel",
-    "ipywidgets",
-    "plotly",
-    "kaleido",
-    "timm",
-    "pre-commit",
-    "rasterio",
-    "wandb",
+    "numpy>=1.24",
+    "torch>=2.1",
 ]
 
-[project.urls]
-"Homepage" = "https://github.com/adamdai/neural_elevation_models"
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+tcnn = [
+    "tinycudann",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["nemo"]
+include = ["nemo", "nemo.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
