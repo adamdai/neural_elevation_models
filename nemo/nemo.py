@@ -12,6 +12,7 @@ from nemo.height_field import Bounds, HeightField, as_targets, as_tensor
 from nemo.models.hashgrid import TCNNHashGridHeightField
 from nemo.models.residual_mlp import ResidualMLPHeightField
 from nemo.models.smooth_grid import SmoothGridHeightField
+from nemo.rendering import RenderResult, render_height_field
 from nemo.tiling import TileConfig, TiledHeightField
 
 
@@ -125,6 +126,9 @@ class Nemo:
 
     def evaluate(self, xy: Tensor) -> Tensor:
         return self.h(xy)
+
+    def render_view(self, intrinsics: Any, world_T_camera: Any, **kwargs: Any) -> RenderResult:
+        return render_height_field(self.field, intrinsics, world_T_camera, **kwargs)
 
     @property
     def normalization_metadata(self) -> dict[str, Any]:

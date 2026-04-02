@@ -8,6 +8,11 @@ import numpy as np
 
 from nemo.io.dem_loaders import load_dem
 
+try:
+    import pyvista as pv
+except ImportError:  # pragma: no cover - optional dependency
+    pv = None
+
 ArrayLike = float | Sequence[float] | np.ndarray
 
 
@@ -15,6 +20,16 @@ ArrayLike = float | Sequence[float] | np.ndarray
 class DEMBounds:
     x: tuple[float, float]
     y: tuple[float, float]
+
+
+@dataclass(frozen=True)
+class CameraIntrinsics:
+    width: int
+    height: int
+    fx: float
+    fy: float
+    cx: float
+    cy: float
 
 
 def _as_grid(data: np.ndarray) -> np.ndarray:
@@ -69,6 +84,8 @@ class DEM:
         self.dx = self._estimate_spacing(self.x_axis)
         self.dy = self._estimate_spacing(self.y_axis)
         self.gy, self.gx = np.gradient(self.z, self.y_axis, self.x_axis, edge_order=1)
+        self._render_plotter = None
+        self._render_grid = None
 
     @classmethod
     def from_path(
@@ -137,6 +154,59 @@ class DEM:
 
     def to_xyz(self) -> np.ndarray:
         return self.data.reshape(-1, 3)
+
+    def setup_render(self, width: int, height: int) -> None:
+        if pv is None:  # pragma: no cover - optional dependency
+            raise ImportError("pyvista is required for DEM rendering.")
+        self._render_grid = pv.StructuredGrid(self.x, self.y, self.z)
+        self._render_plotter = pv.Plotter(off_screen=True, window_size=(width, height))
+        self._render_plotter.set_background("white")
+        self._render_plotter.add_mesh(self._render_grid, cmap="terrain", smooth_shading=False)
+        self._render_plotter.show(auto_close=False, interactive=False, screenshot=False)
+
+    def render_view(
+        self,
+        world_T_camera: np.ndarray,
+        intrinsics: CameraIntrinsics,
+        *,
+        return_rgb: bool = False,
+        return_horizon: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        if pv is None:  # pragma: no cover - optional dependency
+            raise ImportError("pyvista is required for DEM rendering.")
+        if self._render_plotter is None:
+            self.setup_render(intrinsics.width, intrinsics.height)
+
+        Rwc = np.asarray(world_T_camera[:3, :3], dtype=np.float64)
+        twc = np.asarray(world_T_camera[:3, 3], dtype=np.float64)
+        forward_w = Rwc @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        up_w = Rwc @ np.array([0.0, -1.0, 0.0], dtype=np.float64)
+        fovy_deg = np.degrees(2.0 * np.arctan2(intrinsics.height / 2.0, intrinsics.fy))
+
+        camera = pv.Camera()
+        camera.position = tuple(twc)
+        camera.focal_point = tuple(twc + forward_w)
+        camera.up = tuple(up_w / max(np.linalg.norm(up_w), 1e-8))
+        camera.view_angle = float(fovy_deg)
+        camera.SetUseHorizontalViewAngle(False)
+        camera.OrthogonalizeViewUp()
+
+        self._render_plotter.camera = camera
+        self._render_plotter.renderer.ResetCameraClippingRange()
+        self._render_plotter.render()
+        depth = self._render_plotter.get_image_depth()
+
+        if return_horizon:
+            mask = np.isfinite(depth) & (depth > -2000.0)
+            horizon = np.argmax(mask, axis=0)
+            horizon[~mask.any(axis=0)] = -1
+            return depth, horizon
+
+        if return_rgb:
+            rgb = self._render_plotter.screenshot(None, return_img=True)
+            return depth, rgb
+
+        return depth
 
     @staticmethod
     def _estimate_spacing(axis: np.ndarray) -> float:

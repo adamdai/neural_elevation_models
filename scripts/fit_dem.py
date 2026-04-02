@@ -359,7 +359,7 @@ def _load_patch_registry() -> dict[str, dict[str, dict[str, object]]]:
 def _default_patch_name(dem_path: str | Path) -> str | None:
     dem_name = Path(dem_path).name
     if dem_name == "Mt_Etna-DSM.tif":
-        return "s3li_crater_dem_buffer_5"
+        return "s3li_crater_default_dem_buffer"
     return None
 
 
