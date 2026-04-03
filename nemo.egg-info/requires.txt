@@ -1,0 +1,16 @@
+numpy>=1.24
+plotly>=5.20
+torch>=2.1
+tyro>=0.8
+
+[dev]
+pytest>=8.0
+
+[tcnn]
+tinycudann
+
+[tif]
+rasterio
+
+[viewer]
+viser>=0.2

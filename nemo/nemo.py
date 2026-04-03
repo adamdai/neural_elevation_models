@@ -69,18 +69,24 @@ class Nemo:
         bounds: Bounds,
         hidden_dim: int = 64,
         depth: int = 4,
+        backbone_type: str = "mlp",
+        residual_type: str = "grid",
         grid_resolution_x: int = 128,
         grid_resolution_y: int = 128,
         interpolation: str = "bilinear",
+        siren_omega_0: float = 30.0,
         fitter: TorchHeightFieldFitter | None = None,
     ) -> "Nemo":
         field = SmoothGridHeightField(
             bounds=bounds,
             hidden_dim=hidden_dim,
             depth=depth,
+            backbone_type=backbone_type,
+            residual_type=residual_type,
             grid_resolution_x=grid_resolution_x,
             grid_resolution_y=grid_resolution_y,
             interpolation=interpolation,
+            siren_omega_0=siren_omega_0,
         )
         return cls(field, fitter=fitter)
 
@@ -239,9 +245,12 @@ def _serialize_field(field: HeightField) -> dict[str, Any]:
             "bounds": _serialize_bounds(field.bounds),
             "hidden_dim": field.hidden_dim,
             "depth": field.depth,
+            "backbone_type": field.backbone_type,
+            "residual_type": field.residual_type,
             "grid_resolution_x": field.grid_resolution_x,
             "grid_resolution_y": field.grid_resolution_y,
             "interpolation": field.interpolation,
+            "siren_omega_0": field.siren_omega_0,
         }
     if isinstance(field, TiledHeightField):
         return {
@@ -296,9 +305,12 @@ def _deserialize_field(spec: dict[str, Any]) -> HeightField:
             bounds=_deserialize_bounds(spec["bounds"]),
             hidden_dim=int(spec["hidden_dim"]),
             depth=int(spec["depth"]),
-            grid_resolution_x=int(spec["grid_resolution_x"]),
-            grid_resolution_y=int(spec["grid_resolution_y"]),
-            interpolation=str(spec["interpolation"]),
+            backbone_type=str(spec.get("backbone_type", "mlp")),
+            residual_type=str(spec.get("residual_type", "grid")),
+            grid_resolution_x=int(spec.get("grid_resolution_x", 128)),
+            grid_resolution_y=int(spec.get("grid_resolution_y", 128)),
+            interpolation=str(spec.get("interpolation", "bilinear")),
+            siren_omega_0=float(spec.get("siren_omega_0", 30.0)),
         )
     if field_type == "tiled":
         config_spec = spec["config"]

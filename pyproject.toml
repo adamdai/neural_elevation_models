@@ -24,6 +24,9 @@ dev = [
 tif = [
     "rasterio",
 ]
+viewer = [
+    "viser>=0.2",
+]
 tcnn = [
     "tinycudann",
 ]

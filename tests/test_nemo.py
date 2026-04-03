@@ -4,6 +4,7 @@ import torch
 
 from nemo import Nemo, PlaneBaseline, TileConfig, TorchFitConfig
 from nemo.models.residual_mlp import ResidualMLPHeightField
+from nemo.models.smooth_grid import SmoothGridHeightField
 
 
 def make_training_data(n: int = 1024) -> tuple[torch.Tensor, torch.Tensor]:
@@ -61,3 +62,18 @@ def test_tiled_field_can_fit_local_models() -> None:
     pred = nemo.h(xy[:128])
     mse = torch.mean((pred - z[:128]) ** 2).item()
     assert mse < 2e-2
+
+
+def test_smooth_grid_siren_without_residual_matches_autograd_gradient() -> None:
+    field = SmoothGridHeightField(
+        bounds=((-1.0, 1.0), (-1.0, 1.0)),
+        hidden_dim=16,
+        depth=3,
+        backbone_type="siren",
+        residual_type="none",
+    )
+    xy = torch.tensor([[0.1, -0.2]], dtype=torch.float32, requires_grad=True)
+    z = field.h(xy)
+    expected = torch.autograd.grad(z.sum(), xy)[0]
+    got = field.grad(xy.detach())
+    assert torch.allclose(got, expected, atol=1e-5)

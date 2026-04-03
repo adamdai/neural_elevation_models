@@ -1,3 +1,26 @@
+Metadata-Version: 2.4
+Name: nemo
+Version: 0.2.0
+Summary: Neural elevation models for height-field fitting.
+Author: Adam Dai
+License-Expression: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy>=1.24
+Requires-Dist: plotly>=5.20
+Requires-Dist: torch>=2.1
+Requires-Dist: tyro>=0.8
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Provides-Extra: tif
+Requires-Dist: rasterio; extra == "tif"
+Provides-Extra: viewer
+Requires-Dist: viser>=0.2; extra == "viewer"
+Provides-Extra: tcnn
+Requires-Dist: tinycudann; extra == "tcnn"
+Dynamic: license-file
+
 # Neural Elevation Models
 
 Fresh restart of the NEMo codebase around a smaller core abstraction:

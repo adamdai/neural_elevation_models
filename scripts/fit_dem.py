@@ -63,9 +63,12 @@ class SmoothGridArgs:
     architecture: Literal["smooth_grid"] = "smooth_grid"
     hidden_dim: int = 64
     depth: int = 4
+    backbone_type: Literal["mlp", "siren"] = "mlp"
+    residual_type: Literal["grid", "none"] = "grid"
     grid_resolution_x: int = 128
     grid_resolution_y: int = 128
     interpolation: Literal["bilinear", "bicubic"] = "bilinear"
+    siren_omega_0: float = 30.0
 
 
 ModelArgs = (
@@ -166,9 +169,12 @@ def _build_nemo(
             bounds=bounds,
             hidden_dim=model.hidden_dim,
             depth=model.depth,
+            backbone_type=model.backbone_type,
+            residual_type=model.residual_type,
             grid_resolution_x=model.grid_resolution_x,
             grid_resolution_y=model.grid_resolution_y,
             interpolation=model.interpolation,
+            siren_omega_0=model.siren_omega_0,
         )
     tile_config = TileConfig(
         bounds=bounds,
