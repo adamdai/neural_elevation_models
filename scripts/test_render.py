@@ -44,23 +44,42 @@ class TestRenderArgs:
     dem_path: str = "data/dems/Mt_Etna-DSM.tif"
     patch_name: str = "s3li_crater_dem_buffer_5"
     output_dir: str = "output/test_render"
+    checkpoint_path: str | None = "output/Mt_Etna-DSM__smooth-grid/model.pt"
     width: int = 640
     height: int = 480
     fx: float = 500.0
     fy: float = 500.0
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    fit_nemo: bool = True
+    fit_nemo: bool = False
     iterations: int = 200
     max_fit_points: int = 50000
     model: str = "smooth-grid"
     fit_eval_stride: int = 4
     compare_presets: bool = True
+    benchmark_repeats: int = 3
+    num_bracket_samples: int = 96
+    num_bisection_steps: int = 14
+    num_newton_steps: int = 2
+    ray_batch_size: int = 8192
+    sweep: bool = False
+    sweep_ray_batch_sizes: str = "4096,8192,16384,32768"
+    sweep_num_bracket_samples: str = "48,64,96"
+    sweep_num_bisection_steps: str = "8,12,14"
+    sweep_num_newton_steps: str = "1,2"
+    sweep_view_name: str = "crater_close"
 
 
 def _load_patch_bounds(dem_path: str, patch_name: str) -> tuple[tuple[float, float], tuple[float, float]]:
     registry = json.loads((Path(__file__).resolve().parent.parent / "data" / "dem_patches.json").read_text())
     patch = registry[Path(dem_path).name][patch_name]
     return tuple(patch["xlims"]), tuple(patch["ylims"])
+
+
+def _parse_int_list(raw: str) -> list[int]:
+    values = [item.strip() for item in raw.split(",") if item.strip()]
+    if not values:
+        raise ValueError("Expected at least one integer value in comma-separated list.")
+    return [int(item) for item in values]
 
 
 def _build_camera(dem: DEM, view: ViewSpec) -> np.ndarray:
@@ -274,6 +293,7 @@ def _render_single_view(
     nemo: Nemo,
     intrinsics: CameraIntrinsics,
     view: ViewSpec,
+    args: TestRenderArgs,
 ) -> dict[str, float | int | str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     world_T_camera = _build_camera(dem, view)
@@ -289,18 +309,23 @@ def _render_single_view(
 
     t_near = 1.0
     t_far = 5000.0
-    render_start = time.perf_counter()
-    render = nemo.render_view(
-        intrinsics,
-        world_T_camera,
-        t_near=t_near,
-        t_far=t_far,
-        num_bracket_samples=96,
-        num_bisection_steps=14,
-        num_newton_steps=2,
-        ray_batch_size=8192,
-    )
-    render_seconds = time.perf_counter() - render_start
+    render_times: list[float] = []
+    render = None
+    for _ in range(max(int(args.benchmark_repeats), 1)):
+        render_start = time.perf_counter()
+        render = nemo.render_view(
+            intrinsics,
+            world_T_camera,
+            t_near=t_near,
+            t_far=t_far,
+            num_bracket_samples=int(args.num_bracket_samples),
+            num_bisection_steps=int(args.num_bisection_steps),
+            num_newton_steps=int(args.num_newton_steps),
+            ray_batch_size=int(args.ray_batch_size),
+        )
+        render_times.append(time.perf_counter() - render_start)
+    assert render is not None
+    render_seconds = float(np.mean(render_times))
     print(f"[view={view.name}]", end=" ")
     _print_render_diagnostics(render.depth, t_near=t_near, t_far=t_far)
 
@@ -315,7 +340,10 @@ def _render_single_view(
     values = render.depth[finite]
     stats: dict[str, float | int | str] = {
         "view": view.name,
-        "render_seconds": float(render_seconds),
+        "render_seconds": render_seconds,
+        "render_seconds_min": float(np.min(render_times)),
+        "render_seconds_max": float(np.max(render_times)),
+        "benchmark_repeats": int(len(render_times)),
         "finite_pixels": int(finite.sum()),
         "min_depth": float(values.min()) if values.size else float("nan"),
         "median_depth": float(np.median(values)) if values.size else float("nan"),
@@ -323,6 +351,116 @@ def _render_single_view(
     }
     _save_json(output_dir / "render_summary.json", stats)
     return stats
+
+
+def _benchmark_single_view(
+    dem: DEM,
+    nemo: Nemo,
+    intrinsics: CameraIntrinsics,
+    view: ViewSpec,
+    *,
+    num_bracket_samples: int,
+    num_bisection_steps: int,
+    num_newton_steps: int,
+    ray_batch_size: int,
+    benchmark_repeats: int,
+) -> dict[str, float | int | str]:
+    world_T_camera = _build_camera(dem, view)
+    t_near = 1.0
+    t_far = 5000.0
+    render_times: list[float] = []
+    render = None
+    for _ in range(max(int(benchmark_repeats), 1)):
+        render_start = time.perf_counter()
+        render = nemo.render_view(
+            intrinsics,
+            world_T_camera,
+            t_near=t_near,
+            t_far=t_far,
+            num_bracket_samples=int(num_bracket_samples),
+            num_bisection_steps=int(num_bisection_steps),
+            num_newton_steps=int(num_newton_steps),
+            ray_batch_size=int(ray_batch_size),
+        )
+        render_times.append(time.perf_counter() - render_start)
+    assert render is not None
+    finite = np.isfinite(render.depth)
+    return {
+        "view": view.name,
+        "render_seconds": float(np.mean(render_times)),
+        "render_seconds_min": float(np.min(render_times)),
+        "render_seconds_max": float(np.max(render_times)),
+        "benchmark_repeats": int(len(render_times)),
+        "ray_batch_size": int(ray_batch_size),
+        "num_bracket_samples": int(num_bracket_samples),
+        "num_bisection_steps": int(num_bisection_steps),
+        "num_newton_steps": int(num_newton_steps),
+        "finite_pixels": int(finite.sum()),
+    }
+
+
+def _run_sweep(
+    output_dir: Path,
+    dem: DEM,
+    nemo: Nemo,
+    intrinsics: CameraIntrinsics,
+    args: TestRenderArgs,
+) -> None:
+    views = {view.name: view for view in _default_views()}
+    if args.sweep_view_name not in views:
+        raise ValueError(f"Unknown sweep_view_name: {args.sweep_view_name}")
+    view = views[args.sweep_view_name]
+
+    ray_batch_sizes = _parse_int_list(args.sweep_ray_batch_sizes)
+    bracket_samples = _parse_int_list(args.sweep_num_bracket_samples)
+    bisection_steps = _parse_int_list(args.sweep_num_bisection_steps)
+    newton_steps = _parse_int_list(args.sweep_num_newton_steps)
+
+    records: list[dict[str, float | int | str]] = []
+    total = len(ray_batch_sizes) * len(bracket_samples) * len(bisection_steps) * len(newton_steps)
+    index = 0
+    for ray_batch_size in ray_batch_sizes:
+        for num_bracket_samples in bracket_samples:
+            for num_bisection_steps in bisection_steps:
+                for num_newton_steps in newton_steps:
+                    index += 1
+                    result = _benchmark_single_view(
+                        dem,
+                        nemo,
+                        intrinsics,
+                        view,
+                        num_bracket_samples=num_bracket_samples,
+                        num_bisection_steps=num_bisection_steps,
+                        num_newton_steps=num_newton_steps,
+                        ray_batch_size=ray_batch_size,
+                        benchmark_repeats=args.benchmark_repeats,
+                    )
+                    records.append(result)
+                    print(
+                        f"[sweep {index}/{total}] view={view.name} "
+                        f"batch={ray_batch_size} bracket={num_bracket_samples} "
+                        f"bisect={num_bisection_steps} newton={num_newton_steps} "
+                        f"time={result['render_seconds']:.4f}s "
+                        f"finite={result['finite_pixels']}"
+                    )
+
+    records.sort(key=lambda item: float(item["render_seconds"]))
+    summary = {
+        "mode": "render_sweep",
+        "checkpoint_path": args.checkpoint_path,
+        "view": view.name,
+        "results": records,
+        "best": records[0] if records else None,
+    }
+    _save_json(output_dir / "sweep_summary.json", summary)
+    if records:
+        best = records[0]
+        print(
+            f"[sweep_best] view={view.name} "
+            f"batch={best['ray_batch_size']} bracket={best['num_bracket_samples']} "
+            f"bisect={best['num_bisection_steps']} newton={best['num_newton_steps']} "
+            f"time={best['render_seconds']:.4f}s"
+        )
 
 
 def main(args: TestRenderArgs) -> None:
@@ -341,6 +479,43 @@ def main(args: TestRenderArgs) -> None:
     )
 
     if not args.fit_nemo:
+        if args.checkpoint_path is None:
+            raise ValueError("checkpoint_path is required when fit_nemo is False.")
+        checkpoint_path = Path(args.checkpoint_path).expanduser().resolve()
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+        nemo = Nemo.load_checkpoint(checkpoint_path, map_location=args.device).to(args.device)
+        run_dir = output_dir / checkpoint_path.stem
+        run_dir.mkdir(parents=True, exist_ok=True)
+        if args.sweep:
+            _run_sweep(run_dir, dem, nemo, intrinsics, args)
+            return
+        render_summaries = []
+        for view in _default_views():
+            render_summaries.append(_render_single_view(run_dir / view.name, dem, nemo, intrinsics, view, args))
+        avg_render_seconds = float(np.mean([item["render_seconds"] for item in render_summaries]))
+        summary = {
+            "mode": "checkpoint_render",
+            "checkpoint_path": str(checkpoint_path),
+            "avg_render_seconds": avg_render_seconds,
+            "views": render_summaries,
+            "render_config": {
+                "width": int(args.width),
+                "height": int(args.height),
+                "fx": float(args.fx),
+                "fy": float(args.fy),
+                "benchmark_repeats": int(args.benchmark_repeats),
+                "num_bracket_samples": int(args.num_bracket_samples),
+                "num_bisection_steps": int(args.num_bisection_steps),
+                "num_newton_steps": int(args.num_newton_steps),
+                "ray_batch_size": int(args.ray_batch_size),
+            },
+        }
+        _save_json(run_dir / "benchmark_summary.json", summary)
+        print(
+            f"[checkpoint={checkpoint_path.name}] "
+            f"avg_render_seconds={avg_render_seconds:.3f}"
+        )
         return
 
     aggregate: list[dict[str, object]] = []
@@ -358,7 +533,7 @@ def main(args: TestRenderArgs) -> None:
 
         render_summaries = []
         for view in _default_views():
-            render_summaries.append(_render_single_view(variant_dir / view.name, dem, nemo, intrinsics, view))
+            render_summaries.append(_render_single_view(variant_dir / view.name, dem, nemo, intrinsics, view, args))
 
         avg_render_seconds = float(np.mean([item["render_seconds"] for item in render_summaries]))
         aggregate.append(

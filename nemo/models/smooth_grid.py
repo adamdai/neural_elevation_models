@@ -25,6 +25,27 @@ class CoarseMLP(nn.Module):
     def forward(self, xy: Tensor) -> Tensor:
         return self.net(xy)
 
+    def forward_with_grad(self, xy: Tensor) -> tuple[Tensor, Tensor]:
+        grad = None
+        activations = xy
+        for module in self.net:
+            if isinstance(module, nn.Linear):
+                activations = module(activations)
+                weight = module.weight.to(dtype=xy.dtype, device=xy.device)
+                if grad is None:
+                    grad = weight.unsqueeze(0).expand(xy.shape[0], -1, -1)
+                else:
+                    grad = torch.einsum("oi,nij->noj", weight, grad)
+            elif isinstance(module, nn.Softplus):
+                slope = torch.sigmoid(activations)
+                activations = module(activations)
+                assert grad is not None
+                grad = slope[..., None] * grad
+            else:
+                raise TypeError(f"Unsupported CoarseMLP module: {type(module).__name__}")
+        assert grad is not None
+        return activations, grad.squeeze(1)
+
 
 class SineLayer(nn.Module):
     def __init__(
@@ -77,6 +98,30 @@ class SirenBackbone(nn.Module):
     def forward(self, xy: Tensor) -> Tensor:
         return self.net(xy)
 
+    def forward_with_grad(self, xy: Tensor) -> tuple[Tensor, Tensor]:
+        grad = None
+        activations = xy
+        for module in self.net:
+            if isinstance(module, SineLayer):
+                linear_out = module.linear(activations)
+                weight = module.linear.weight.to(dtype=xy.dtype, device=xy.device)
+                if grad is None:
+                    linear_grad = weight.unsqueeze(0).expand(xy.shape[0], -1, -1)
+                else:
+                    linear_grad = torch.einsum("oi,nij->noj", weight, grad)
+                slope = module.omega_0 * torch.cos(module.omega_0 * linear_out)
+                activations = torch.sin(module.omega_0 * linear_out)
+                grad = slope[..., None] * linear_grad
+            elif isinstance(module, nn.Linear):
+                activations = module(activations)
+                weight = module.weight.to(dtype=xy.dtype, device=xy.device)
+                assert grad is not None
+                grad = torch.einsum("oi,nij->noj", weight, grad)
+            else:
+                raise TypeError(f"Unsupported SirenBackbone module: {type(module).__name__}")
+        assert grad is not None
+        return activations, grad.squeeze(1)
+
 
 class ZeroResidual(nn.Module):
     def forward(self, xy_norm: Tensor) -> Tensor:
@@ -112,6 +157,44 @@ class ResidualGrid(nn.Module):
             align_corners=True,
         )
         return sampled.reshape(*original_shape, 1)
+
+    def forward_with_grad(self, xy_norm: Tensor) -> tuple[Tensor, Tensor]:
+        values = self.forward(xy_norm)
+        x = xy_norm[..., 0].clamp(-1.0, 1.0)
+        y = xy_norm[..., 1].clamp(-1.0, 1.0)
+
+        grid = self.grid[0, 0]
+        width = self.grid_resolution_x
+        height = self.grid_resolution_y
+
+        x_idx = 0.5 * (x + 1.0) * (width - 1)
+        y_idx = 0.5 * (y + 1.0) * (height - 1)
+
+        x0 = torch.floor(x_idx).to(torch.long).clamp(0, width - 2)
+        y0 = torch.floor(y_idx).to(torch.long).clamp(0, height - 2)
+        x1 = x0 + 1
+        y1 = y0 + 1
+
+        wx = x_idx - x0.to(dtype=x_idx.dtype)
+        wy = y_idx - y0.to(dtype=y_idx.dtype)
+
+        v00 = grid[y0, x0]
+        v01 = grid[y0, x1]
+        v10 = grid[y1, x0]
+        v11 = grid[y1, x1]
+
+        dv_dx_idx = (1.0 - wy) * (v01 - v00) + wy * (v11 - v10)
+        dv_dy_idx = (1.0 - wx) * (v10 - v00) + wx * (v11 - v01)
+
+        scale_x = 0.5 * float(width - 1)
+        scale_y = 0.5 * float(height - 1)
+        grad = torch.stack([dv_dx_idx * scale_x, dv_dy_idx * scale_y], dim=-1)
+
+        boundary_x = (xy_norm[..., 0] <= -1.0) | (xy_norm[..., 0] >= 1.0)
+        boundary_y = (xy_norm[..., 1] <= -1.0) | (xy_norm[..., 1] >= 1.0)
+        grad[..., 0] = torch.where(boundary_x, torch.zeros_like(grad[..., 0]), grad[..., 0])
+        grad[..., 1] = torch.where(boundary_y, torch.zeros_like(grad[..., 1]), grad[..., 1])
+        return values, grad
 
 
 class SmoothGridHeightField(HeightField):
@@ -178,5 +261,66 @@ class SmoothGridHeightField(HeightField):
             create_graph=True,
         )[0]
 
+    def h_and_grad(self, xy: Tensor, create_graph: bool = False) -> tuple[Tensor, Tensor]:
+        if self.interpolation == "bicubic":
+            return super().h_and_grad(xy, create_graph=create_graph)
+
+        xy_local = xy.clone().detach()
+        xy_norm = self.normalize_inputs(xy_local)
+        norm_scale = self._input_gradient_scale(xy_norm)
+
+        coarse_norm, coarse_grad_norm = self._backbone_with_grad(xy_norm.reshape(-1, 2))
+        coarse_norm = coarse_norm.reshape(*xy.shape[:-1], 1)
+        coarse_grad_norm = coarse_grad_norm.reshape(*xy.shape[:-1], 2)
+
+        residual_norm, residual_grad_norm = self._residual_with_grad(xy_norm)
+        z_norm = coarse_norm + residual_norm
+        grad_norm = coarse_grad_norm + residual_grad_norm
+
+        output_scale = self.output_scale.to(dtype=z_norm.dtype, device=z_norm.device)
+        z = self.denormalize_outputs(z_norm)
+        grad = output_scale * grad_norm * norm_scale
+        return z, grad
+
     def h(self, xy: Tensor) -> Tensor:
         return self.denormalize_outputs(self.training_predictions(xy))
+
+    def _backbone_with_grad(self, xy_norm_flat: Tensor) -> tuple[Tensor, Tensor]:
+        if self.backbone_type == "mlp":
+            return self.backbone.forward_with_grad(xy_norm_flat)
+        if self.backbone_type == "siren":
+            return self.backbone.forward_with_grad(xy_norm_flat)
+        raise ValueError(f"Unsupported backbone_type: {self.backbone_type}")
+
+    def _residual_with_grad(self, xy_norm: Tensor) -> tuple[Tensor, Tensor]:
+        if self.residual_type == "none":
+            values = self.residual(xy_norm)
+            grad = torch.zeros(*xy_norm.shape[:-1], 2, dtype=xy_norm.dtype, device=xy_norm.device)
+            return values, grad
+        if self.residual_type == "grid" and self.interpolation == "bilinear":
+            return self.residual.forward_with_grad(xy_norm)
+        return self.residual(xy_norm), torch.zeros(
+            *xy_norm.shape[:-1],
+            2,
+            dtype=xy_norm.dtype,
+            device=xy_norm.device,
+        )
+
+    def _input_gradient_scale(self, xy_norm: Tensor) -> Tensor:
+        if self.input_normalization == "minus_one_to_one":
+            scale = xy_norm.new_tensor(
+                [
+                    2.0 / max(float(self.bounds[0][1] - self.bounds[0][0]), 1e-8),
+                    2.0 / max(float(self.bounds[1][1] - self.bounds[1][0]), 1e-8),
+                ]
+            )
+            return scale
+        if self.input_normalization == "zero_to_one":
+            scale = xy_norm.new_tensor(
+                [
+                    1.0 / max(float(self.bounds[0][1] - self.bounds[0][0]), 1e-8),
+                    1.0 / max(float(self.bounds[1][1] - self.bounds[1][0]), 1e-8),
+                ]
+            )
+            return scale
+        return xy_norm.new_tensor([1.0, 1.0])

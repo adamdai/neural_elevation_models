@@ -89,6 +89,8 @@ pip install -e ".[viewer]"
 python scripts/interactive_render.py --checkpoint-path path/to/model.pt
 ```
 
+The interactive viewer defaults to a lower-cost draft render preset tuned for responsiveness. Increase `--num-bracket-samples`, `--num-bisection-steps`, or `--num-newton-steps` if you want a higher-quality render.
+
 Run a lightweight architecture and hyperparameter search over `fit_dem.py`:
 
 ```bash

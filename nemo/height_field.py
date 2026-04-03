@@ -123,7 +123,7 @@ class HeightField(nn.Module, ABC):
     def training_gradients(self, xy: Tensor) -> Tensor:
         return self.grad(xy, create_graph=True)
 
-    def grad(self, xy: Tensor, create_graph: bool = False) -> Tensor:
+    def h_and_grad(self, xy: Tensor, create_graph: bool = False) -> tuple[Tensor, Tensor]:
         xy = xy.clone().detach().requires_grad_(True)
         z = self.h(xy)
         grad = torch.autograd.grad(
@@ -131,6 +131,10 @@ class HeightField(nn.Module, ABC):
             inputs=xy,
             create_graph=create_graph,
         )[0]
+        return z, grad
+
+    def grad(self, xy: Tensor, create_graph: bool = False) -> Tensor:
+        _, grad = self.h_and_grad(xy, create_graph=create_graph)
         return grad
 
 

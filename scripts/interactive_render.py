@@ -26,17 +26,17 @@ class InteractiveRenderArgs:
     host: str = "127.0.0.1"
     port: int = 8080
     render_scale: float = 0.5
-    max_fps: float = 4.0
+    max_fps: float = 8.0
     jpeg_quality: int = 85
     preview_resolution_x: int = 180
     preview_resolution_y: int = 180
     point_size: float = 0.015
     t_near: float = 1.0
     t_far: float | None = None
-    num_bracket_samples: int = 96
-    num_bisection_steps: int = 14
-    num_newton_steps: int = 2
-    ray_batch_size: int = 8192
+    num_bracket_samples: int = 32
+    num_bisection_steps: int = 6
+    num_newton_steps: int = 1
+    ray_batch_size: int = 32768
 
 
 @dataclass

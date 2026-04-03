@@ -41,6 +41,16 @@ def test_gradient_matches_autograd() -> None:
     assert torch.allclose(got, expected, atol=1e-5)
 
 
+def test_h_and_grad_matches_separate_queries() -> None:
+    field = ResidualMLPHeightField(bounds=((-1.0, 1.0), (-1.0, 1.0)), hidden_dim=16, depth=2)
+    xy = torch.tensor([[0.25, -0.5], [0.1, 0.2]], dtype=torch.float32)
+    h_expected = field.h(xy)
+    grad_expected = field.grad(xy)
+    h_got, grad_got = field.h_and_grad(xy)
+    assert torch.allclose(h_got, h_expected, atol=1e-5)
+    assert torch.allclose(grad_got, grad_expected, atol=1e-5)
+
+
 def test_tiled_field_can_fit_local_models() -> None:
     xy, z = make_training_data(2048)
     tile_config = TileConfig(
@@ -77,3 +87,26 @@ def test_smooth_grid_siren_without_residual_matches_autograd_gradient() -> None:
     expected = torch.autograd.grad(z.sum(), xy)[0]
     got = field.grad(xy.detach())
     assert torch.allclose(got, expected, atol=1e-5)
+
+
+def test_smooth_grid_bilinear_h_and_grad_matches_autograd() -> None:
+    field = SmoothGridHeightField(
+        bounds=((-1.0, 1.0), (-1.0, 1.0)),
+        hidden_dim=8,
+        depth=3,
+        backbone_type="mlp",
+        residual_type="grid",
+        grid_resolution_x=8,
+        grid_resolution_y=7,
+        interpolation="bilinear",
+    )
+    with torch.no_grad():
+        grid = field.residual.grid
+        grid.copy_(torch.linspace(-0.2, 0.3, grid.numel(), dtype=grid.dtype).reshape_as(grid))
+
+    xy = torch.tensor([[0.23, -0.41], [-0.17, 0.29]], dtype=torch.float32, requires_grad=True)
+    z = field.h(xy)
+    expected_grad = torch.autograd.grad(z.sum(), xy)[0]
+    z_got, grad_got = field.h_and_grad(xy.detach())
+    assert torch.allclose(z_got, z.detach(), atol=1e-5)
+    assert torch.allclose(grad_got, expected_grad, atol=1e-4)
