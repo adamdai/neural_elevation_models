@@ -71,10 +71,13 @@ class Nemo:
         depth: int = 4,
         backbone_type: str = "mlp",
         residual_type: str = "grid",
+        color_type: str = "none",
         grid_resolution_x: int = 128,
         grid_resolution_y: int = 128,
         interpolation: str = "bilinear",
         siren_omega_0: float = 30.0,
+        color_encoding_config: dict[str, Any] | None = None,
+        color_network_config: dict[str, Any] | None = None,
         fitter: TorchHeightFieldFitter | None = None,
     ) -> "Nemo":
         field = SmoothGridHeightField(
@@ -83,10 +86,13 @@ class Nemo:
             depth=depth,
             backbone_type=backbone_type,
             residual_type=residual_type,
+            color_type=color_type,
             grid_resolution_x=grid_resolution_x,
             grid_resolution_y=grid_resolution_y,
             interpolation=interpolation,
             siren_omega_0=siren_omega_0,
+            color_encoding_config=color_encoding_config,
+            color_network_config=color_network_config,
         )
         return cls(field, fitter=fitter)
 
@@ -247,10 +253,13 @@ def _serialize_field(field: HeightField) -> dict[str, Any]:
             "depth": field.depth,
             "backbone_type": field.backbone_type,
             "residual_type": field.residual_type,
+            "color_type": field.color_type,
             "grid_resolution_x": field.grid_resolution_x,
             "grid_resolution_y": field.grid_resolution_y,
             "interpolation": field.interpolation,
             "siren_omega_0": field.siren_omega_0,
+            "color_encoding_config": field.color_encoding_config,
+            "color_network_config": field.color_network_config,
         }
     if isinstance(field, TiledHeightField):
         return {
@@ -307,10 +316,21 @@ def _deserialize_field(spec: dict[str, Any]) -> HeightField:
             depth=int(spec["depth"]),
             backbone_type=str(spec.get("backbone_type", "mlp")),
             residual_type=str(spec.get("residual_type", "grid")),
+            color_type=str(spec.get("color_type", "none")),
             grid_resolution_x=int(spec.get("grid_resolution_x", 128)),
             grid_resolution_y=int(spec.get("grid_resolution_y", 128)),
             interpolation=str(spec.get("interpolation", "bilinear")),
             siren_omega_0=float(spec.get("siren_omega_0", 30.0)),
+            color_encoding_config=(
+                dict(spec["color_encoding_config"])
+                if spec.get("color_encoding_config") is not None
+                else None
+            ),
+            color_network_config=(
+                dict(spec["color_network_config"])
+                if spec.get("color_network_config") is not None
+                else None
+            ),
         )
     if field_type == "tiled":
         config_spec = spec["config"]

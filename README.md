@@ -79,6 +79,7 @@ python scripts/fit_dem.py --dem-path path/to/dem.npy model:residual-mlp --hidden
 python scripts/fit_dem.py --dem-path path/to/dem.npy model:tiled-residual-mlp --tile-size-x 128 --tile-size-y 128
 python scripts/fit_dem.py --dem-path path/to/dem.npy model:smooth-grid --model.hidden-dim 64 --model.grid-resolution-x 128 --model.grid-resolution-y 128
 python scripts/fit_dem.py --dem-path path/to/dem.npy model:smooth-grid --model.backbone-type siren --model.residual-type grid --model.siren-omega-0 30.0
+python scripts/fit_dem.py --dem-path path/to/dem.npy model:smooth-grid --model.color-type hashgrid
 python scripts/fit_dem.py --dem-path path/to/dem.npy model:hashgrid
 ```
 
@@ -86,10 +87,18 @@ Interactive viewer for saved checkpoints:
 
 ```bash
 pip install -e ".[viewer]"
-python scripts/interactive_render.py --checkpoint-path path/to/model.pt
+python scripts/mesh_viewer.py --checkpoint-path path/to/model.pt
 ```
 
-The interactive viewer defaults to a lower-cost draft render preset tuned for responsiveness. Increase `--num-bracket-samples`, `--num-bisection-steps`, or `--num-newton-steps` if you want a higher-quality render.
+This viewer samples the NeMO into a colored terrain mesh and lets the browser rasterize it quickly.
+
+Exact ray-based viewer for training/debugging:
+
+```bash
+python scripts/training_viewer.py --checkpoint-path path/to/model.pt
+```
+
+The exact viewer defaults to a lower-cost draft render preset tuned for responsiveness. Increase `--num-bracket-samples`, `--num-bisection-steps`, or `--num-newton-steps` if you want a higher-quality render.
 
 Run a lightweight architecture and hyperparameter search over `fit_dem.py`:
 

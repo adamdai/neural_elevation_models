@@ -13,6 +13,7 @@ import tyro
 
 from nemo import CameraIntrinsics, DEM, Nemo, TorchFitConfig, look_at_pose
 from nemo.plotting import evaluate_dem_fit
+from nemo.viewer import shade_render
 
 
 @dataclass(frozen=True)
@@ -331,9 +332,12 @@ def _render_single_view(
 
     _save_depth(output_dir / "nemo_depth.png", render.depth)
     _save_mask(output_dir / "nemo_hit_mask.png", render.hit_mask)
+    plt.imsave(output_dir / "nemo_rgb.png", shade_render(render))
     np.save(output_dir / "nemo_depth.npy", render.depth)
     np.save(output_dir / "nemo_points.npy", render.points)
     np.save(output_dir / "nemo_normals.npy", render.normals)
+    if render.rgb is not None:
+        np.save(output_dir / "nemo_rgb.npy", render.rgb)
     _save_json(output_dir / "view_spec.json", asdict(view))
     print(f"Saved NEMo render to {output_dir}")
     finite = np.isfinite(render.depth)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+
 import torch
 
 from nemo import Nemo, PlaneBaseline, TileConfig, TorchFitConfig
@@ -110,3 +112,16 @@ def test_smooth_grid_bilinear_h_and_grad_matches_autograd() -> None:
     z_got, grad_got = field.h_and_grad(xy.detach())
     assert torch.allclose(z_got, z.detach(), atol=1e-5)
     assert torch.allclose(grad_got, expected_grad, atol=1e-4)
+
+
+def test_smooth_grid_color_checkpoint_round_trip(tmp_path) -> None:
+    if importlib.util.find_spec("tinycudann") is None:
+        return
+    nemo = Nemo.smooth_grid(
+        bounds=((-1.0, 1.0), (-1.0, 1.0)),
+        color_type="hashgrid",
+    )
+    path = tmp_path / "color_model.pt"
+    nemo.save_checkpoint(path)
+    loaded = Nemo.load_checkpoint(path, map_location="cpu")
+    assert loaded.field.has_color()

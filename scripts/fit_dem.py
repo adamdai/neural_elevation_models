@@ -65,6 +65,7 @@ class SmoothGridArgs:
     depth: int = 4
     backbone_type: Literal["mlp", "siren"] = "mlp"
     residual_type: Literal["grid", "none"] = "grid"
+    color_type: Literal["none", "hashgrid"] = "none"
     grid_resolution_x: int = 128
     grid_resolution_y: int = 128
     interpolation: Literal["bilinear", "bicubic"] = "bilinear"
@@ -171,6 +172,7 @@ def _build_nemo(
             depth=model.depth,
             backbone_type=model.backbone_type,
             residual_type=model.residual_type,
+            color_type=model.color_type,
             grid_resolution_x=model.grid_resolution_x,
             grid_resolution_y=model.grid_resolution_y,
             interpolation=model.interpolation,

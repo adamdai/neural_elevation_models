@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import numpy as np
 
 from nemo import Nemo
@@ -93,3 +94,29 @@ def test_render_height_field_smoke() -> None:
     )
     assert render.depth.shape == (24, 32)
     assert render.hit_mask.shape == (24, 32)
+    assert render.rgb is None
+
+
+def test_render_height_field_with_color_smoke() -> None:
+    if importlib.util.find_spec("tinycudann") is None:
+        return
+    nemo = Nemo.smooth_grid(
+        bounds=((-1.0, 1.0), (-1.0, 1.0)),
+        color_type="hashgrid",
+    )
+    intrinsics = CameraIntrinsics(width=32, height=24, fx=28.0, fy=28.0, cx=16.0, cy=12.0)
+    world_T_camera = np.eye(4, dtype=np.float32)
+    world_T_camera[:3, 3] = np.array([0.0, 0.0, 2.0], dtype=np.float32)
+    render = render_height_field(
+        nemo.field,
+        intrinsics,
+        world_T_camera,
+        t_near=0.1,
+        t_far=4.0,
+        num_bracket_samples=16,
+        num_bisection_steps=4,
+        num_newton_steps=1,
+        ray_batch_size=2048,
+    )
+    assert render.rgb is not None
+    assert render.rgb.shape == (24, 32, 3)

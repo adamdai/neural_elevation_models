@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+import torch
+import trimesh
 
 from nemo.dem import CameraIntrinsics
 from nemo.nemo import Nemo
@@ -141,8 +143,47 @@ def preview_point_cloud(
         batch_size=batch_size,
     )
     points = np.stack([xx, yy, zz], axis=-1).reshape(-1, 3).astype(np.float32)
-    colors = _height_colors(zz, estimate_z_bounds(nemo)).reshape(-1, 3)
+    if nemo.field.has_color():
+        colors = _sample_field_colors(nemo, xx, yy, batch_size=batch_size)
+    else:
+        colors = _height_colors(zz, estimate_z_bounds(nemo)).reshape(-1, 3)
     return points, colors
+
+
+def sample_height_field_mesh(
+    nemo: Nemo,
+    *,
+    resolution_x: int = 220,
+    resolution_y: int = 220,
+    batch_size: int = 65536,
+) -> trimesh.Trimesh:
+    xx, yy, zz = sample_height_field_grid(
+        nemo,
+        resolution_x=resolution_x,
+        resolution_y=resolution_y,
+        batch_size=batch_size,
+    )
+    vertices = np.stack([xx, yy, zz], axis=-1).reshape(-1, 3).astype(np.float32)
+    if nemo.field.has_color():
+        colors = _sample_field_colors(nemo, xx, yy, batch_size=batch_size)
+    else:
+        colors = _height_colors(zz, estimate_z_bounds(nemo)).reshape(-1, 3)
+    vertex_colors = np.clip(255.0 * colors, 0.0, 255.0).astype(np.uint8)
+
+    h, w = zz.shape
+    quads_r, quads_c = np.meshgrid(np.arange(h - 1), np.arange(w - 1), indexing="ij")
+    i0 = quads_r * w + quads_c
+    i1 = i0 + 1
+    i2 = i0 + w
+    i3 = i2 + 1
+    faces = np.stack(
+        [
+            np.stack([i0, i1, i2], axis=-1),
+            np.stack([i1, i3, i2], axis=-1),
+        ],
+        axis=0,
+    ).reshape(-1, 3)
+    return trimesh.Trimesh(vertices=vertices, faces=faces, vertex_colors=vertex_colors, process=False)
 
 
 def shade_render(
@@ -172,7 +213,10 @@ def shade_render(
     if z_max - z_min < 1e-6:
         z_max = z_min + 1.0
 
-    base = _height_colors(points[..., 2], (z_min, z_max))
+    if render.rgb is not None:
+        base = np.clip(np.asarray(render.rgb, dtype=np.float32), 0.0, 1.0)
+    else:
+        base = _height_colors(points[..., 2], (z_min, z_max))
     light = np.asarray(light_direction, dtype=np.float32)
     light /= max(float(np.linalg.norm(light)), 1e-8)
     diffuse = np.clip(np.sum(normals * light[None, None, :], axis=-1), 0.0, 1.0)
@@ -212,3 +256,20 @@ def _height_colors(z: np.ndarray, z_bounds: tuple[float, float]) -> np.ndarray:
     color = color + (high - color) * second[..., None]
     color = color + (snow - color) * third[..., None]
     return np.clip(color, 0.0, 1.0)
+
+
+def _sample_field_colors(
+    nemo: Nemo,
+    xx: np.ndarray,
+    yy: np.ndarray,
+    *,
+    batch_size: int = 65536,
+) -> np.ndarray:
+    xy = np.column_stack([xx.reshape(-1), yy.reshape(-1)])
+    preds: list[np.ndarray] = []
+    device = nemo.device
+    for start in range(0, len(xy), batch_size):
+        batch = torch.as_tensor(xy[start : start + batch_size], dtype=torch.float32, device=device)
+        pred = nemo.field.color(batch).detach().cpu().numpy()
+        preds.append(pred)
+    return np.concatenate(preds, axis=0).reshape(xx.shape[0] * xx.shape[1], 3)

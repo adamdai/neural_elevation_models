@@ -16,6 +16,7 @@ class RenderResult:
     hit_mask: np.ndarray
     points: np.ndarray
     normals: np.ndarray
+    rgb: np.ndarray | None = None
 
 
 def look_at_pose(
@@ -90,6 +91,9 @@ def render_height_field(
     hit_mask = torch.zeros((origins.shape[0],), dtype=torch.bool, device=device)
     points = torch.full((origins.shape[0], 3), float("nan"), dtype=torch.float32, device=device)
     normals = torch.full((origins.shape[0], 3), float("nan"), dtype=torch.float32, device=device)
+    colors = None
+    if field.has_color():
+        colors = torch.full((origins.shape[0], 3), float("nan"), dtype=torch.float32, device=device)
 
     sample_grid = torch.linspace(0.0, 1.0, int(num_bracket_samples), dtype=torch.float32, device=device)
     x_min, x_max = float(field.bounds[0][0]), float(field.bounds[0][1])
@@ -186,12 +190,18 @@ def render_height_field(
             [-grad_hit, torch.ones((grad_hit.shape[0], 1), dtype=grad_hit.dtype, device=device)], dim=-1
         )
         normal_hit = normal_hit / torch.linalg.norm(normal_hit, dim=-1, keepdim=True).clamp_min(1e-8)
+        color_hit = None
+        if colors is not None:
+            with torch.no_grad():
+                color_hit = field.color(xyz_hit[:, :2]).to(dtype=colors.dtype, device=colors.device)
 
         batch_hit_indices = hit_batch_indices + start
         depth[batch_hit_indices] = t_hit
         hit_mask[batch_hit_indices] = True
         points[batch_hit_indices] = xyz_hit
         normals[batch_hit_indices] = normal_hit
+        if color_hit is not None:
+            colors[batch_hit_indices] = color_hit
 
     h = intrinsics.height
     w = intrinsics.width
@@ -200,6 +210,7 @@ def render_height_field(
         hit_mask=hit_mask.reshape(h, w).detach().cpu().numpy(),
         points=points.reshape(h, w, 3).detach().cpu().numpy(),
         normals=normals.reshape(h, w, 3).detach().cpu().numpy(),
+        rgb=colors.reshape(h, w, 3).detach().cpu().numpy() if colors is not None else None,
     )
 
 

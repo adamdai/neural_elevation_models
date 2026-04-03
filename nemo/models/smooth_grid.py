@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 from nemo.height_field import Bounds, HeightField
+from nemo.models.color_decoder import TCNNHashGridColorDecoder
 
 
 class CoarseMLP(nn.Module):
@@ -208,10 +209,13 @@ class SmoothGridHeightField(HeightField):
         depth: int = 4,
         backbone_type: Literal["mlp", "siren"] = "mlp",
         residual_type: Literal["grid", "none"] = "grid",
+        color_type: Literal["none", "hashgrid"] = "none",
         grid_resolution_x: int = 128,
         grid_resolution_y: int = 128,
         interpolation: Literal["bilinear", "bicubic"] = "bilinear",
         siren_omega_0: float = 30.0,
+        color_encoding_config: dict[str, object] | None = None,
+        color_network_config: dict[str, object] | None = None,
     ) -> None:
         super().__init__(
             bounds,
@@ -222,10 +226,13 @@ class SmoothGridHeightField(HeightField):
         self.depth = depth
         self.backbone_type = backbone_type
         self.residual_type = residual_type
+        self.color_type = color_type
         self.grid_resolution_x = grid_resolution_x
         self.grid_resolution_y = grid_resolution_y
         self.interpolation = interpolation
         self.siren_omega_0 = siren_omega_0
+        self.color_encoding_config = dict(color_encoding_config) if color_encoding_config is not None else None
+        self.color_network_config = dict(color_network_config) if color_network_config is not None else None
 
         if backbone_type == "mlp":
             self.backbone = CoarseMLP(hidden_dim=hidden_dim, depth=depth)
@@ -244,6 +251,18 @@ class SmoothGridHeightField(HeightField):
             self.residual = ZeroResidual()
         else:
             raise ValueError(f"Unsupported residual_type: {residual_type}")
+
+        if color_type == "none":
+            self.color_decoder = None
+        elif color_type == "hashgrid":
+            self.color_decoder = TCNNHashGridColorDecoder(
+                encoding_config=self.color_encoding_config,
+                network_config=self.color_network_config,
+            )
+            self.color_encoding_config = dict(self.color_decoder.encoding_config)
+            self.color_network_config = dict(self.color_decoder.network_config)
+        else:
+            raise ValueError(f"Unsupported color_type: {color_type}")
 
     def training_predictions(self, xy: Tensor) -> Tensor:
         xy_norm = self.normalize_inputs(xy)
@@ -284,6 +303,15 @@ class SmoothGridHeightField(HeightField):
 
     def h(self, xy: Tensor) -> Tensor:
         return self.denormalize_outputs(self.training_predictions(xy))
+
+    def has_color(self) -> bool:
+        return self.color_decoder is not None
+
+    def color(self, xy: Tensor) -> Tensor:
+        if self.color_decoder is None:
+            return super().color(xy)
+        xy_zero_to_one = self.normalizer.normalize_zero_to_one(xy)
+        return self.color_decoder(xy_zero_to_one)
 
     def _backbone_with_grad(self, xy_norm_flat: Tensor) -> tuple[Tensor, Tensor]:
         if self.backbone_type == "mlp":
