@@ -281,10 +281,10 @@ class SmoothGridHeightField(HeightField):
         )[0]
 
     def h_and_grad(self, xy: Tensor, create_graph: bool = False) -> tuple[Tensor, Tensor]:
-        if self.interpolation == "bicubic":
+        if create_graph or self.interpolation == "bicubic":
             return super().h_and_grad(xy, create_graph=create_graph)
 
-        xy_local = xy.clone().detach()
+        xy_local = xy
         xy_norm = self.normalize_inputs(xy_local)
         norm_scale = self._input_gradient_scale(xy_norm)
 

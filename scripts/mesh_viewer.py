@@ -17,8 +17,8 @@ class MeshViewerArgs:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     host: str = "127.0.0.1"
     port: int = 8081
-    resolution_x: int = 280
-    resolution_y: int = 280
+    resolution_x: int = 1000
+    resolution_y: int = 1000
     material: str = "standard"
     wireframe: bool = False
     flat_shading: bool = False
@@ -51,7 +51,9 @@ def main(args: MeshViewerArgs) -> None:
     with server.gui.add_folder("Mesh"):
         gui_wireframe = server.gui.add_checkbox("Wireframe", initial_value=bool(args.wireframe))
         gui_flat = server.gui.add_checkbox("Flat shading", initial_value=bool(args.flat_shading))
-        gui_axes = server.gui.add_checkbox("Show world axes", initial_value=bool(args.show_world_axes))
+        gui_axes = server.gui.add_checkbox(
+            "Show world axes", initial_value=bool(args.show_world_axes)
+        )
     status = server.gui.add_text(
         "Status",
         initial_value=(

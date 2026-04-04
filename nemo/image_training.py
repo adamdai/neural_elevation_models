@@ -50,6 +50,7 @@ def render_color_samples(
     num_bisection_steps: int = 6,
     num_newton_steps: int = 1,
     background_color: tuple[float, float, float] = (0.5, 0.7, 0.9),
+    differentiable_geometry: bool = False,
 ) -> SampledRenderResult:
     if not field.has_color():
         raise ValueError("Field must define color() for image supervision.")
@@ -122,15 +123,28 @@ def render_color_samples(
         t_upper = torch.where(move_lower, t_upper, t_mid)
 
     t_hit = 0.5 * (t_lower + t_upper)
-    for _ in range(int(num_newton_steps)):
-        hit_xy = hit_origins[:, :2] + t_hit[:, None] * hit_dirs[:, :2]
-        z_ray = hit_origins[:, 2] + t_hit * hit_dirs[:, 2]
-        h_hit, grad_hit = field.h_and_grad(hit_xy, create_graph=False)
-        h_hit = h_hit.squeeze(-1)
-        f_hit = z_ray - h_hit
-        f_prime = hit_dirs[:, 2] - torch.sum(grad_hit * hit_dirs[:, :2], dim=-1)
-        safe_f_prime = torch.where(torch.abs(f_prime) < 1e-6, torch.sign(f_prime + 1e-6) * 1e-6, f_prime)
-        t_hit = torch.clamp(t_hit - f_hit / safe_f_prime, min=t_lower, max=t_upper)
+    if differentiable_geometry:
+        t_hit = _refine_hit_t(
+            field,
+            hit_origins,
+            hit_dirs,
+            t_hit,
+            t_lower,
+            t_upper,
+            num_newton_steps=int(num_newton_steps),
+            create_graph=True,
+        )
+    else:
+        t_hit = _refine_hit_t(
+            field,
+            hit_origins,
+            hit_dirs,
+            t_hit,
+            t_lower,
+            t_upper,
+            num_newton_steps=int(num_newton_steps),
+            create_graph=False,
+        )
 
     hit_xy = hit_origins[:, :2] + t_hit[:, None] * hit_dirs[:, :2]
     hit_rgb = field.color(hit_xy).to(dtype=rgb.dtype)
@@ -139,6 +153,33 @@ def render_color_samples(
     depth[hit_indices] = t_hit
     rgb[hit_indices] = hit_rgb
     return SampledRenderResult(rgb=rgb, hit_mask=hit_mask, xy_hit=xy_hit, depth=depth)
+
+
+def _refine_hit_t(
+    field: HeightField,
+    hit_origins: Tensor,
+    hit_dirs: Tensor,
+    t_hit: Tensor,
+    t_lower: Tensor,
+    t_upper: Tensor,
+    *,
+    num_newton_steps: int,
+    create_graph: bool,
+) -> Tensor:
+    for _ in range(int(num_newton_steps)):
+        hit_xy = hit_origins[:, :2] + t_hit[:, None] * hit_dirs[:, :2]
+        z_ray = hit_origins[:, 2] + t_hit * hit_dirs[:, 2]
+        h_hit, grad_hit = field.h_and_grad(hit_xy, create_graph=create_graph)
+        h_hit = h_hit.squeeze(-1)
+        f_hit = z_ray - h_hit
+        f_prime = hit_dirs[:, 2] - torch.sum(grad_hit * hit_dirs[:, :2], dim=-1)
+        safe_f_prime = torch.where(
+            torch.abs(f_prime) < 1e-6,
+            torch.sign(f_prime + 1e-6) * 1e-6,
+            f_prime,
+        )
+        t_hit = torch.clamp(t_hit - f_hit / safe_f_prime, min=t_lower, max=t_upper)
+    return t_hit
 
 
 def _xy_intersection_interval(

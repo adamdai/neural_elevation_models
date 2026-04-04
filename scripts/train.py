@@ -15,6 +15,7 @@ import tyro
 from nemo import Nemo, TorchFitConfig
 from nemo.image_training import render_color_samples
 from nemo.io.nerfstudio_dataset import load_nerfstudio_dataset
+from nemo.models.smooth_grid import SmoothGridHeightField
 
 
 @dataclass
@@ -41,9 +42,17 @@ class TrainArgs:
     image_lr: float = 1e-2
     color_weight_decay: float = 0.0
     freeze_geometry: bool = True
+    image_loss_weight: float = 1.0
+    geometry_loss_weight: float = 0.1
+    differentiable_geometry_from_images: bool = False
+    geometry_loss_weight_final: float | None = None
+    geometry_smoothness_weight: float = 0.0
+    smoothness_batch_size: int = 2048
     pixel_batch_size: int = 4096
     eval_every: int = 25
     eval_pixel_count: int = 8192
+    frame_hit_eval_pixels: int = 2048
+    min_train_frame_hit_fraction: float = 0.0
     render_preview_every: int = 100
     render_preview_max_dim: int = 256
     t_near: float = 0.1
@@ -81,9 +90,34 @@ def main(args: TrainArgs) -> None:
         grid_resolution_x=args.grid_resolution_x,
         grid_resolution_y=args.grid_resolution_y,
     ).to(args.device)
+    image_geom_grad_enabled = bool(args.differentiable_geometry_from_images) and _supports_image_geometry_gradients(nemo)
+    if bool(args.differentiable_geometry_from_images) and not image_geom_grad_enabled:
+        print("[train] image->geometry gradients disabled for this field; using joint color+geometry losses instead")
 
     if args.fit_geometry:
         _fit_geometry(nemo, dataset, args)
+
+    geometry_xy_full, geometry_z_full = _prepare_geometry_targets(dataset, args, device=args.device)
+    frame_hit_fractions = _evaluate_frame_hit_fractions(
+        nemo,
+        dataset.frames,
+        args,
+        resolved_t_far=resolved_t_far,
+    )
+    train_frames = [
+        frame
+        for frame, hit_fraction in zip(dataset.frames, frame_hit_fractions, strict=True)
+        if hit_fraction >= float(args.min_train_frame_hit_fraction)
+    ]
+    if not train_frames:
+        raise ValueError(
+            f"No train frames satisfy min_train_frame_hit_fraction={args.min_train_frame_hit_fraction:.3f}"
+        )
+    print(
+        f"[frames] using {len(train_frames)}/{len(dataset.frames)} frames for training "
+        f"(min_hit={min(frame_hit_fractions):.3f} max_hit={max(frame_hit_fractions):.3f} "
+        f"threshold={float(args.min_train_frame_hit_fraction):.3f})"
+    )
 
     if args.freeze_geometry:
         for name, parameter in nemo.field.named_parameters():
@@ -105,7 +139,7 @@ def main(args: TrainArgs) -> None:
     skipped_no_hit = 0
     train_start = time.perf_counter()
     for step in range(1, int(args.image_iterations) + 1):
-        frame = dataset.frames[random.randrange(len(dataset.frames))]
+        frame = train_frames[random.randrange(len(train_frames))]
         uv, target_rgb = _sample_pixels(frame.image, args.pixel_batch_size, device=args.device)
         render = render_color_samples(
             nemo.field,
@@ -117,8 +151,10 @@ def main(args: TrainArgs) -> None:
             num_bracket_samples=args.num_bracket_samples,
             num_bisection_steps=args.num_bisection_steps,
             num_newton_steps=args.num_newton_steps,
+            differentiable_geometry=(not args.freeze_geometry and image_geom_grad_enabled),
         )
 
+        total_loss = None
         hit_mask = render.hit_mask
         if torch.any(hit_mask):
             pred = render.rgb[hit_mask]
@@ -126,14 +162,53 @@ def main(args: TrainArgs) -> None:
             color_loss = torch.nn.functional.mse_loss(pred, target)
             psnr = _psnr(color_loss.detach())
             hit_fraction = float(hit_mask.float().mean().item())
+            total_loss = float(args.image_loss_weight) * color_loss
         else:
             skipped_no_hit += 1
             if step == 1 or skipped_no_hit <= 5 or skipped_no_hit % 25 == 0:
                 print(f"[train] step={step} skipped batch with no ray hits")
+            color_loss = None
+            psnr = float("nan")
+            hit_fraction = 0.0
+
+        geometry_loss = None
+        geometry_weight = _scheduled_weight(
+            step,
+            int(args.image_iterations),
+            start=float(args.geometry_loss_weight),
+            end=(
+                float(args.geometry_loss_weight_final)
+                if args.geometry_loss_weight_final is not None
+                else float(args.geometry_loss_weight)
+            ),
+        )
+        if geometry_weight > 0.0 and geometry_xy_full.shape[0] > 0:
+            idx = torch.randint(0, geometry_xy_full.shape[0], (int(args.geometry_batch_size),), device=args.device)
+            geom_xy = geometry_xy_full[idx]
+            geom_z = geometry_z_full[idx]
+            geom_pred = nemo.field.h(geom_xy)
+            geometry_loss = torch.nn.functional.mse_loss(geom_pred, geom_z)
+            total_loss = (
+                geometry_weight * geometry_loss
+                if total_loss is None
+                else total_loss + geometry_weight * geometry_loss
+            )
+
+        smoothness_loss = None
+        if float(args.geometry_smoothness_weight) > 0.0 and not args.freeze_geometry:
+            smooth_xy = _sample_xy_in_bounds(
+                nemo,
+                int(args.smoothness_batch_size),
+                device=args.device,
+            )
+            smoothness_loss = _geometry_smoothness_loss(nemo, smooth_xy)
+            total_loss = total_loss + float(args.geometry_smoothness_weight) * smoothness_loss
+
+        if total_loss is None:
             continue
 
         optimizer.zero_grad(set_to_none=True)
-        color_loss.backward()
+        total_loss.backward()
         optimizer.step()
 
         if step == 1 or step % int(args.eval_every) == 0 or step == int(args.image_iterations):
@@ -145,7 +220,11 @@ def main(args: TrainArgs) -> None:
             )
             record = {
                 "step": step,
-                "train_loss": float(color_loss.item()),
+                "train_loss": float(total_loss.item()),
+                "train_color_loss": float(color_loss.item()) if color_loss is not None else float("nan"),
+                "train_geometry_loss": float(geometry_loss.item()) if geometry_loss is not None else float("nan"),
+                "train_geometry_weight": float(geometry_weight),
+                "train_smoothness_loss": float(smoothness_loss.item()) if smoothness_loss is not None else float("nan"),
                 "train_psnr": float(psnr),
                 "train_hit_fraction": hit_fraction,
                 "skipped_no_hit": skipped_no_hit,
@@ -155,6 +234,10 @@ def main(args: TrainArgs) -> None:
             print(
                 f"[train] step={step} "
                 f"train_loss={record['train_loss']:.6f} "
+                f"color_loss={record['train_color_loss']:.6f} "
+                f"geom_loss={record['train_geometry_loss']:.6f} "
+                f"geom_w={record['train_geometry_weight']:.4f} "
+                f"smooth={record['train_smoothness_loss']:.6f} "
                 f"train_psnr={record['train_psnr']:.2f} "
                 f"train_hit={record['train_hit_fraction']:.3f} "
                 f"eval_loss={record['eval_loss']:.6f} "
@@ -175,6 +258,15 @@ def main(args: TrainArgs) -> None:
     summary = {
         "args": asdict(args),
         "resolved_t_far": resolved_t_far,
+        "frame_hit_fractions": [
+            {
+                "frame_index": idx,
+                "image_path": str(frame.image_path),
+                "hit_fraction": float(hit_fraction),
+                "used_for_training": bool(hit_fraction >= float(args.min_train_frame_hit_fraction)),
+            }
+            for idx, (frame, hit_fraction) in enumerate(zip(dataset.frames, frame_hit_fractions, strict=True))
+        ],
         "skipped_no_hit": int(skipped_no_hit),
         "total_seconds": float(total_seconds),
         "metrics": metrics,
@@ -199,8 +291,8 @@ def _fit_geometry(nemo: Nemo, dataset, args: TrainArgs) -> None:
         rng = np.random.default_rng(args.seed)
         idx = rng.choice(len(points), size=int(args.geometry_max_points), replace=False)
         points = points[idx]
-    xy = torch.from_numpy(points[:, :2].astype(np.float32))
-    z = torch.from_numpy(points[:, 2:3].astype(np.float32))
+    xy = torch.from_numpy(points[:, :2].astype(np.float32)).to(args.device)
+    z = torch.from_numpy(points[:, 2:3].astype(np.float32)).to(args.device)
     print(f"[geometry] fitting {len(points)} sparse points")
     nemo.fit(
         xy,
@@ -215,6 +307,26 @@ def _fit_geometry(nemo: Nemo, dataset, args: TrainArgs) -> None:
             verbose=True,
         ),
     )
+
+
+def _prepare_geometry_targets(dataset, args: TrainArgs, *, device: str) -> tuple[torch.Tensor, torch.Tensor]:
+    points = dataset.sparse_points
+    x_min, x_max = dataset.bounds_xy[0]
+    y_min, y_max = dataset.bounds_xy[1]
+    in_bounds = (
+        (points[:, 0] >= x_min)
+        & (points[:, 0] <= x_max)
+        & (points[:, 1] >= y_min)
+        & (points[:, 1] <= y_max)
+    )
+    points = points[in_bounds]
+    if len(points) > int(args.geometry_max_points):
+        rng = np.random.default_rng(args.seed)
+        idx = rng.choice(len(points), size=int(args.geometry_max_points), replace=False)
+        points = points[idx]
+    xy = torch.from_numpy(points[:, :2].astype(np.float32)).to(device)
+    z = torch.from_numpy(points[:, 2:3].astype(np.float32)).to(device)
+    return xy, z
 
 
 def _sample_pixels(
@@ -261,6 +373,32 @@ def _evaluate_color(
         "eval_psnr": float(_psnr(loss)),
         "eval_hit_fraction": hit_fraction,
     }
+
+
+def _evaluate_frame_hit_fractions(
+    nemo: Nemo,
+    frames,
+    args: TrainArgs,
+    *,
+    resolved_t_far: float,
+) -> list[float]:
+    hit_fractions: list[float] = []
+    for frame in frames:
+        uv, _ = _sample_pixels(frame.image, args.frame_hit_eval_pixels, device=args.device)
+        with torch.no_grad():
+            render = render_color_samples(
+                nemo.field,
+                frame.intrinsics,
+                frame.world_T_camera,
+                uv,
+                t_near=args.t_near,
+                t_far=resolved_t_far,
+                num_bracket_samples=args.num_bracket_samples,
+                num_bisection_steps=args.num_bisection_steps,
+                num_newton_steps=args.num_newton_steps,
+            )
+        hit_fractions.append(float(render.hit_mask.float().mean().item()))
+    return hit_fractions
 
 
 def _render_preview(
@@ -325,6 +463,44 @@ def _auto_t_far(dataset) -> float:
     camera_positions = np.stack([frame.world_T_camera[:3, 3] for frame in dataset.frames], axis=0)
     max_camera_dist = float(np.max(np.linalg.norm(camera_positions - center[None, :], axis=-1)))
     return max(2.0 * radius + max_camera_dist, 100.0)
+
+
+def _supports_image_geometry_gradients(nemo: Nemo) -> bool:
+    field = nemo.field
+    if isinstance(field, SmoothGridHeightField) and field.residual_type == "grid":
+        return False
+    return True
+
+
+def _scheduled_weight(step: int, total_steps: int, *, start: float, end: float) -> float:
+    if total_steps <= 1:
+        return float(end)
+    alpha = float(step - 1) / float(total_steps - 1)
+    return (1.0 - alpha) * float(start) + alpha * float(end)
+
+
+def _sample_xy_in_bounds(nemo: Nemo, batch_size: int, *, device: str) -> torch.Tensor:
+    bounds = nemo.field.bounds
+    x = torch.rand(batch_size, device=device) * float(bounds[0][1] - bounds[0][0]) + float(bounds[0][0])
+    y = torch.rand(batch_size, device=device) * float(bounds[1][1] - bounds[1][0]) + float(bounds[1][0])
+    return torch.stack([x, y], dim=-1)
+
+
+def _geometry_smoothness_loss(nemo: Nemo, xy: torch.Tensor) -> torch.Tensor:
+    xy = xy.clone().detach().requires_grad_(True)
+    _, grad = nemo.field.h_and_grad(xy, create_graph=True)
+    d2x_full = torch.autograd.grad(grad[:, 0].sum(), xy, create_graph=True, allow_unused=True)[0]
+    d2y_full = torch.autograd.grad(grad[:, 1].sum(), xy, create_graph=True, allow_unused=True)[0]
+    if d2x_full is None:
+        d2x = torch.zeros(xy.shape[0], dtype=xy.dtype, device=xy.device)
+    else:
+        d2x = d2x_full[:, 0]
+    if d2y_full is None:
+        d2y = torch.zeros(xy.shape[0], dtype=xy.dtype, device=xy.device)
+    else:
+        d2y = d2y_full[:, 1]
+    laplacian = d2x + d2y
+    return torch.mean(laplacian * laplacian)
 
 
 def _seed_everything(seed: int) -> None:
