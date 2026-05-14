@@ -9,6 +9,7 @@ from torch import Tensor
 from nemo.baselines import BaselineSurface, ConstantBaseline, PlaneBaseline
 from nemo.fit import TorchFitConfig, TorchHeightFieldFitter
 from nemo.height_field import Bounds, HeightField, as_targets, as_tensor
+from nemo.image_training import HorizonRenderResult, render_horizon_samples
 from nemo.models.hashgrid import TCNNHashGridHeightField
 from nemo.models.residual_mlp import ResidualMLPHeightField
 from nemo.models.smooth_grid import SmoothGridHeightField
@@ -142,6 +143,9 @@ class Nemo:
     def render_view(self, intrinsics: Any, world_T_camera: Any, **kwargs: Any) -> RenderResult:
         return render_height_field(self.field, intrinsics, world_T_camera, **kwargs)
 
+    def render_horizon(self, intrinsics: Any, world_T_camera: Any, **kwargs: Any) -> HorizonRenderResult:
+        return render_horizon_samples(self.field, intrinsics, world_T_camera, **kwargs)
+
     @property
     def normalization_metadata(self) -> dict[str, Any]:
         return _field_normalization_metadata(self.field)
@@ -183,7 +187,8 @@ class Nemo:
         checkpoint = torch.load(path, map_location=map_location, weights_only=False)
         field_spec = checkpoint["field_spec"]
         field = _deserialize_field(field_spec)
-        field.load_state_dict(checkpoint["state_dict"])
+        state_dict = _compat_state_dict_for_field(field, checkpoint["state_dict"])
+        field.load_state_dict(state_dict)
         return cls(field, fitter=fitter)
 
 
@@ -346,3 +351,17 @@ def _deserialize_field(spec: dict[str, Any]) -> HeightField:
 
         return TiledHeightField(config=tile_config, field_factory=field_factory)
     raise ValueError(f"Unsupported height field type: {field_type}")
+
+
+def _compat_state_dict_for_field(field: HeightField, state_dict: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(field, SmoothGridHeightField):
+        remapped: dict[str, Any] = {}
+        for key, value in state_dict.items():
+            if key.startswith("mlp."):
+                remapped["backbone." + key[len("mlp."):]] = value
+            elif key == "residual_grid":
+                remapped["residual.grid"] = value
+            else:
+                remapped[key] = value
+        return remapped
+    return state_dict

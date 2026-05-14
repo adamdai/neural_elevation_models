@@ -156,10 +156,13 @@ def _load_rasterio_grid(
     path: Path,
     xlims: tuple[float, float] | None = None,
     ylims: tuple[float, float] | None = None,
+    max_side: int | None = None,
 ) -> np.ndarray:
     try:
         import rasterio
+        from rasterio import Affine
         from rasterio.windows import Window
+        from rasterio.windows import transform as window_transform
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
             "Loading GeoTIFF DEMs requires `rasterio`. Install it to use `.tif` or `.tiff` files."
@@ -189,12 +192,30 @@ def _load_rasterio_grid(
                 raise ValueError("Crop bounds do not overlap the DEM.")
             window = Window(col_off, row_off, width, height)
 
-        z = dataset.read(1, window=window).astype(np.float32)
+        out_shape = None
+        if max_side is not None:
+            max_side = max(int(max_side), 1)
+            if window is None:
+                read_width = int(dataset.width)
+                read_height = int(dataset.height)
+            else:
+                read_width = int(window.width)
+                read_height = int(window.height)
+            scale = max(read_width / max_side, read_height / max_side, 1.0)
+            out_width = max(1, int(np.ceil(read_width / scale)))
+            out_height = max(1, int(np.ceil(read_height / scale)))
+            out_shape = (out_height, out_width)
+
+        z = dataset.read(1, window=window, out_shape=out_shape).astype(np.float32)
         nodata = dataset.nodata
         if nodata is not None:
             z = np.where(z == nodata, np.nan, z)
 
-        transform = dataset.window_transform(window) if window is not None else dataset.transform
+        transform = window_transform(window, dataset.transform) if window is not None else dataset.transform
+        if out_shape is not None:
+            scale_x = (window.width if window is not None else dataset.width) / float(out_shape[1])
+            scale_y = (window.height if window is not None else dataset.height) / float(out_shape[0])
+            transform = transform * Affine.scale(scale_x, scale_y)
         rows, cols = np.indices(z.shape, dtype=np.float32)
         xs, ys = rasterio.transform.xy(
             transform,
@@ -212,6 +233,7 @@ def load_dem(
     *,
     xlims: tuple[float, float] | None = None,
     ylims: tuple[float, float] | None = None,
+    max_side: int | None = None,
 ) -> np.ndarray:
     file_path = Path(path).expanduser().resolve()
     if not file_path.exists():
@@ -225,5 +247,5 @@ def load_dem(
     if suffix == ".dat":
         return _load_dat_grid(file_path, xlims=xlims, ylims=ylims)
     if suffix in {".tif", ".tiff"}:
-        return _load_rasterio_grid(file_path, xlims=xlims, ylims=ylims)
+        return _load_rasterio_grid(file_path, xlims=xlims, ylims=ylims, max_side=max_side)
     raise ValueError(f"Unsupported DEM format: {file_path.suffix}")

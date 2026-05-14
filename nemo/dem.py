@@ -49,6 +49,7 @@ class DEM:
         data: np.ndarray | None = None,
         xlims: tuple[float, float] | None = None,
         ylims: tuple[float, float] | None = None,
+        max_side: int | None = None,
         zero_origin: bool = False,
     ) -> None:
         if (path is None) == (data is None):
@@ -57,7 +58,7 @@ class DEM:
         if data is not None and (xlims is not None or ylims is not None):
             raise ValueError("Crop bounds are only supported when loading from `path`.")
 
-        grid = load_dem(path, xlims=xlims, ylims=ylims) if path is not None else _as_grid(data)
+        grid = load_dem(path, xlims=xlims, ylims=ylims, max_side=max_side) if path is not None else _as_grid(data)
         x = np.asarray(grid[..., 0], dtype=np.float32)
         y = np.asarray(grid[..., 1], dtype=np.float32)
         z = np.asarray(grid[..., 2], dtype=np.float32)
@@ -94,9 +95,10 @@ class DEM:
         *,
         xlims: tuple[float, float] | None = None,
         ylims: tuple[float, float] | None = None,
+        max_side: int | None = None,
         zero_origin: bool = False,
     ) -> "DEM":
-        return cls(path=path, xlims=xlims, ylims=ylims, zero_origin=zero_origin)
+        return cls(path=path, xlims=xlims, ylims=ylims, max_side=max_side, zero_origin=zero_origin)
 
     @classmethod
     def from_grid(cls, data: np.ndarray, *, zero_origin: bool = False) -> "DEM":

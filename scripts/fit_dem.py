@@ -101,6 +101,7 @@ class FitDemArgs:
     iterations: int = 1000
     lr: float = 1e-3
     batch_size: int | None = 65536
+    load_max_side: int | None = 2048
     weight_decay: float = 0.0
     grad_clip_norm: float | None = None
     gradient_supervision: bool = False
@@ -418,11 +419,10 @@ def main(args: FitDemArgs) -> None:
     np.random.seed(args.seed)
 
     xlims, ylims, patch_name = _resolve_crop_bounds(args)
-    dem = DEM.from_path(args.dem_path, xlims=xlims, ylims=ylims)
-    xyz = dem.to_xyz()
-    valid = np.isfinite(xyz[:, 2])
-    xy_np = xyz[valid, :2].astype(np.float32)
-    z_np = xyz[valid, 2:3].astype(np.float32)
+    dem = DEM.from_path(args.dem_path, xlims=xlims, ylims=ylims, max_side=args.load_max_side)
+    valid = np.isfinite(dem.z)
+    xy_np = np.column_stack([dem.x[valid], dem.y[valid]]).astype(np.float32)
+    z_np = dem.z[valid].astype(np.float32).reshape(-1, 1)
     xy_np, z_np = _sample_points(xy_np, z_np, args.max_fit_points, args.seed)
 
     xy = torch.from_numpy(xy_np)
@@ -506,6 +506,7 @@ def main(args: FitDemArgs) -> None:
             "iterations": args.iterations,
             "lr": args.lr,
             "batch_size": args.batch_size,
+            "load_max_side": args.load_max_side,
             "weight_decay": args.weight_decay,
             "grad_clip_norm": args.grad_clip_norm,
             "gradient_supervision": args.gradient_supervision,

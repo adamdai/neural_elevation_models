@@ -100,6 +100,14 @@ python scripts/training_viewer.py --checkpoint-path path/to/model.pt
 
 The exact viewer defaults to a lower-cost draft render preset tuned for responsiveness. Increase `--num-bracket-samples`, `--num-bisection-steps`, or `--num-newton-steps` if you want a higher-quality render.
 
+Continuous path planning on a trained checkpoint:
+
+```bash
+python scripts/path_planning.py --checkpoint-path path/to/model.pt
+```
+
+By default this uses the DEM bounds from the checkpoint, seeds an A* path between the buffered lower-left and upper-right corners, then optimizes the interior waypoints with a differentiable flatness objective. Outputs are written to `output/path_planning/<checkpoint_name>/` unless `--output-html` is set.
+
 Run a lightweight architecture and hyperparameter search over `fit_dem.py`:
 
 ```bash

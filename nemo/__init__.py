@@ -3,6 +3,7 @@ from nemo.dem import DEM, DEMBounds
 from nemo.dem import CameraIntrinsics
 from nemo.fit import TorchFitConfig, TorchHeightFieldFitter
 from nemo.height_field import HeightField
+from nemo.image_training import HorizonRenderResult, render_horizon_samples
 from nemo.nemo import Nemo
 from nemo.models.smooth_grid import SmoothGridHeightField
 from nemo.rendering import RenderResult, look_at_pose
@@ -14,6 +15,7 @@ __all__ = [
     "DEM",
     "DEMBounds",
     "HeightField",
+    "HorizonRenderResult",
     "Nemo",
     "PlaneBaseline",
     "RenderResult",
@@ -24,4 +26,5 @@ __all__ = [
     "TorchHeightFieldFitter",
     "fit_plane_baseline",
     "look_at_pose",
+    "render_horizon_samples",
 ]
