@@ -126,23 +126,19 @@ def _load_dat_grid(
 
         x_axis = np.unique(x)
         y_axis = np.unique(y)
-        if x_axis.size * y_axis.size != len(data):
-            raise ValueError(
-                f".dat xyz points in {path} do not form a complete rectilinear grid."
-            )
+        if x_axis.size * y_axis.size == len(data):
+            x_index = {float(value): idx for idx, value in enumerate(x_axis)}
+            y_index = {float(value): idx for idx, value in enumerate(y_axis)}
+            z_grid = np.full((y_axis.size, x_axis.size), np.nan, dtype=np.float32)
 
-        x_index = {float(value): idx for idx, value in enumerate(x_axis)}
-        y_index = {float(value): idx for idx, value in enumerate(y_axis)}
-        z_grid = np.full((y_axis.size, x_axis.size), np.nan, dtype=np.float32)
+            for x_value, y_value, z_value in data:
+                row = y_index[float(y_value)]
+                col = x_index[float(x_value)]
+                if not np.isnan(z_grid[row, col]):
+                    raise ValueError(f".dat xyz points in {path} contain duplicate coordinates.")
+                z_grid[row, col] = z_value
 
-        for x_value, y_value, z_value in data:
-            row = y_index[float(y_value)]
-            col = x_index[float(x_value)]
-            if not np.isnan(z_grid[row, col]):
-                raise ValueError(f".dat xyz points in {path} contain duplicate coordinates.")
-            z_grid[row, col] = z_value
-
-        return _crop_grid(_grid_from_axes(x_axis, y_axis, z_grid), xlims, ylims)
+            return _crop_grid(_grid_from_axes(x_axis, y_axis, z_grid), xlims, ylims)
 
     if data.shape[1] >= 1:
         x_axis = np.arange(data.shape[1], dtype=np.float32)

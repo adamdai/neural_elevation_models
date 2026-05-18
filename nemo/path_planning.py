@@ -14,14 +14,17 @@ from nemo.nemo import Nemo
 class PathPlanningConfig:
     astar_grid_resolution_x: int = 128
     astar_grid_resolution_y: int = 128
-    astar_height_weight: float = 1.0
-    astar_slope_weight: float = 1.5
+    astar_height_weight: float = 0.0
+    astar_slope_weight: float = 2.0
+    astar_max_slope_deg: float = 20.0
+    astar_slope_reference_deg: float = 10.0
+    astar_slope_exponent: float = 2.0
     astar_step_weight: float = 1.0
     buffer_fraction: float = 0.2
     num_waypoints: int = 48
     optimize_iterations: int = 250
     optimize_lr: float = 2e-2
-    terrain_height_weight: float = 1.0
+    terrain_height_weight: float = 0.0
     terrain_slope_weight: float = 0.5
     flatness_weight: float = 1.0
     smoothness_weight: float = 0.15
@@ -57,6 +60,14 @@ class PathPlanningResult:
             "initial_objective": float(self.initial_objective),
             "final_objective": float(self.final_objective),
         }
+
+
+@dataclass(frozen=True)
+class TraversabilityGrid:
+    slope_deg: np.ndarray
+    traversable: np.ndarray
+    cost: np.ndarray
+    heatmap: np.ndarray
 
 
 def buffered_corner_points(
@@ -120,29 +131,61 @@ def build_astar_cost_grid(
     gx: np.ndarray,
     gy: np.ndarray,
     *,
-    height_weight: float = 1.0,
-    slope_weight: float = 1.5,
+    height_weight: float = 0.0,
+    slope_weight: float = 2.0,
+    max_slope_deg: float = 20.0,
+    slope_reference_deg: float = 10.0,
+    slope_exponent: float = 2.0,
 ) -> np.ndarray:
+    return build_traversability_grid(
+        z,
+        gx,
+        gy,
+        height_weight=height_weight,
+        slope_weight=slope_weight,
+        max_slope_deg=max_slope_deg,
+        slope_reference_deg=slope_reference_deg,
+        slope_exponent=slope_exponent,
+    ).cost
+
+
+def build_traversability_grid(
+    z: np.ndarray,
+    gx: np.ndarray,
+    gy: np.ndarray,
+    *,
+    height_weight: float = 0.0,
+    slope_weight: float = 2.0,
+    max_slope_deg: float = 20.0,
+    slope_reference_deg: float = 10.0,
+    slope_exponent: float = 2.0,
+) -> TraversabilityGrid:
     z = np.asarray(z, dtype=np.float32)
     gx = np.asarray(gx, dtype=np.float32)
     gy = np.asarray(gy, dtype=np.float32)
 
-    height_range = float(np.nanmax(z) - np.nanmin(z))
-    slope = np.sqrt(gx**2 + gy**2)
-    slope_range = float(np.nanmax(slope))
+    slope_deg = np.degrees(np.arctan(np.hypot(gx, gy))).astype(np.float32)
+    traversable = np.isfinite(z) & np.isfinite(slope_deg) & (slope_deg <= float(max_slope_deg))
 
-    if not np.isfinite(height_range) or height_range <= 1e-8:
+    finite_z = z[np.isfinite(z)]
+    height_range = float(np.nanmax(finite_z) - np.nanmin(finite_z)) if finite_z.size else 0.0
+    if height_range <= 1e-8:
         normalized_height = np.zeros_like(z, dtype=np.float32)
     else:
-        normalized_height = (z - float(np.nanmin(z))) / height_range
+        normalized_height = (z - float(np.nanmin(finite_z))) / height_range
 
-    if not np.isfinite(slope_range) or slope_range <= 1e-8:
-        normalized_slope = np.zeros_like(slope, dtype=np.float32)
-    else:
-        normalized_slope = slope / slope_range
-
-    cost = 1.0 + float(height_weight) * normalized_height + float(slope_weight) * normalized_slope
-    return np.clip(cost, 1e-4, None).astype(np.float32)
+    slope_reference_deg = max(float(slope_reference_deg), 1e-6)
+    clipped_slope = np.clip(slope_deg, 0.0, None)
+    slope_cost = (clipped_slope / slope_reference_deg) ** float(slope_exponent)
+    cost = 1.0 + float(height_weight) * normalized_height + float(slope_weight) * slope_cost
+    cost = np.where(traversable, cost, np.inf)
+    heatmap = np.where(traversable, cost, 0.0)
+    return TraversabilityGrid(
+        slope_deg=slope_deg.astype(np.float32),
+        traversable=traversable,
+        cost=cost.astype(np.float32),
+        heatmap=heatmap.astype(np.float32),
+    )
 
 
 def astar_grid_path(
@@ -151,6 +194,8 @@ def astar_grid_path(
     goal_rc: tuple[int, int],
     *,
     step_weight: float = 1.0,
+    x_axis: np.ndarray | None = None,
+    y_axis: np.ndarray | None = None,
 ) -> np.ndarray:
     cost_grid = np.asarray(cost_grid, dtype=np.float32)
     height, width = cost_grid.shape
@@ -161,6 +206,10 @@ def astar_grid_path(
         raise ValueError("Start index is out of bounds.")
     if not _rc_in_bounds(goal, height, width):
         raise ValueError("Goal index is out of bounds.")
+    if not _valid_cost_cell(start, cost_grid):
+        raise ValueError("Start index is not traversable.")
+    if not _valid_cost_cell(goal, cost_grid):
+        raise ValueError("Goal index is not traversable.")
 
     neighbors = (
         (-1, 0),
@@ -178,6 +227,7 @@ def astar_grid_path(
     came_from: dict[tuple[int, int], tuple[int, int]] = {}
     g_score: dict[tuple[int, int], float] = {start: 0.0}
     closed: set[tuple[int, int]] = set()
+    min_cost = _minimum_finite_cost(cost_grid)
 
     while open_heap:
         _, current = heappop(open_heap)
@@ -191,13 +241,20 @@ def astar_grid_path(
             neighbor = (current[0] + dr, current[1] + dc)
             if not _rc_in_bounds(neighbor, height, width):
                 continue
-            step_length = hypot(float(dr), float(dc))
+            if not _valid_cost_cell(neighbor, cost_grid):
+                continue
+            step_length = _edge_length(current, neighbor, x_axis=x_axis, y_axis=y_axis)
             transition_cost = 0.5 * (float(cost_grid[current]) + float(cost_grid[neighbor]))
             tentative = g_score[current] + float(step_weight) * step_length * transition_cost
             if tentative < g_score.get(neighbor, float("inf")):
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative
-                priority = tentative + _heuristic(neighbor, goal)
+                priority = tentative + float(step_weight) * min_cost * _edge_length(
+                    neighbor,
+                    goal,
+                    x_axis=x_axis,
+                    y_axis=y_axis,
+                )
                 heappush(open_heap, (priority, neighbor))
 
     raise RuntimeError("A* failed to find a path between the requested points.")
@@ -238,7 +295,7 @@ def path_objective(
     nemo: Nemo,
     path_xy: torch.Tensor,
     *,
-    terrain_height_weight: float = 1.0,
+    terrain_height_weight: float = 0.0,
     terrain_slope_weight: float = 0.5,
     flatness_weight: float = 1.0,
     smoothness_weight: float = 0.15,
@@ -368,7 +425,7 @@ def optimize_flat_path(
     *,
     iterations: int = 250,
     lr: float = 2e-2,
-    terrain_height_weight: float = 1.0,
+    terrain_height_weight: float = 0.0,
     terrain_slope_weight: float = 0.5,
     flatness_weight: float = 1.0,
     smoothness_weight: float = 0.15,
@@ -404,6 +461,8 @@ def optimize_flat_path(
         dt=dt,
     )
     initial_objective = float(initial_loss.detach().cpu().item())
+    best_objective = initial_objective
+    best_interior = interior.detach().clone()
 
     x_min, x_max = float(nemo.field.bounds[0][0]), float(nemo.field.bounds[0][1])
     y_min, y_max = float(nemo.field.bounds[1][0]), float(nemo.field.bounds[1][1])
@@ -427,9 +486,25 @@ def optimize_flat_path(
         with torch.no_grad():
             interior[:, 0].clamp_(x_min, x_max)
             interior[:, 1].clamp_(y_min, y_max)
-        cost_history.append(float(loss.detach().cpu().item()))
+            candidate_path = torch.cat([start[None], interior, goal[None]], dim=0)
+            candidate_loss, _ = path_objective(
+                nemo,
+                candidate_path,
+                terrain_height_weight=terrain_height_weight,
+                terrain_slope_weight=terrain_slope_weight,
+                flatness_weight=flatness_weight,
+                smoothness_weight=smoothness_weight,
+                length_weight=length_weight,
+                gravity=gravity,
+                dt=dt,
+            )
+            candidate_objective = float(candidate_loss.detach().cpu().item())
+            if candidate_objective < best_objective:
+                best_objective = candidate_objective
+                best_interior = interior.detach().clone()
+        cost_history.append(candidate_objective)
 
-    optimized_path = torch.cat([start[None], interior.detach(), goal[None]], dim=0)
+    optimized_path = torch.cat([start[None], best_interior, goal[None]], dim=0)
     optimized_loss, _ = path_objective(
         nemo,
         optimized_path,
@@ -473,11 +548,21 @@ def plan_path(
         gy,
         height_weight=cfg.astar_height_weight,
         slope_weight=cfg.astar_slope_weight,
+        max_slope_deg=cfg.astar_max_slope_deg,
+        slope_reference_deg=cfg.astar_slope_reference_deg,
+        slope_exponent=cfg.astar_slope_exponent,
     )
 
     start_rc = _xy_to_rc(start_xy, xx[0, :], yy[:, 0])
     goal_rc = _xy_to_rc(goal_xy, xx[0, :], yy[:, 0])
-    astar_rc = astar_grid_path(cost_grid, start_rc, goal_rc, step_weight=cfg.astar_step_weight)
+    astar_rc = astar_grid_path(
+        cost_grid,
+        start_rc,
+        goal_rc,
+        step_weight=cfg.astar_step_weight,
+        x_axis=xx[0, :],
+        y_axis=yy[:, 0],
+    )
 
     astar_path_xy = np.column_stack([xx[astar_rc[:, 0], astar_rc[:, 1]], yy[astar_rc[:, 0], astar_rc[:, 1]]]).astype(
         np.float32
@@ -526,7 +611,7 @@ def compute_path_metrics(
     nemo: Nemo,
     path_xy: np.ndarray,
     *,
-    terrain_height_weight: float = 1.0,
+    terrain_height_weight: float = 0.0,
     terrain_slope_weight: float = 0.5,
     flatness_weight: float = 1.0,
     smoothness_weight: float = 0.15,
@@ -558,6 +643,31 @@ def _rc_in_bounds(rc: tuple[int, int], height: int, width: int) -> bool:
 
 def _heuristic(a: tuple[int, int], b: tuple[int, int]) -> float:
     return hypot(float(a[0] - b[0]), float(a[1] - b[1]))
+
+
+def _valid_cost_cell(rc: tuple[int, int], cost_grid: np.ndarray) -> bool:
+    return bool(np.isfinite(cost_grid[rc])) and float(cost_grid[rc]) >= 0.0
+
+
+def _minimum_finite_cost(cost_grid: np.ndarray) -> float:
+    valid = np.isfinite(cost_grid) & (cost_grid >= 0.0)
+    if not np.any(valid):
+        return 0.0
+    return float(np.nanmin(cost_grid[valid]))
+
+
+def _edge_length(
+    a: tuple[int, int],
+    b: tuple[int, int],
+    *,
+    x_axis: np.ndarray | None = None,
+    y_axis: np.ndarray | None = None,
+) -> float:
+    if x_axis is None or y_axis is None:
+        return hypot(float(a[0] - b[0]), float(a[1] - b[1]))
+    dx = float(x_axis[int(b[1])] - x_axis[int(a[1])])
+    dy = float(y_axis[int(b[0])] - y_axis[int(a[0])])
+    return hypot(dx, dy)
 
 
 def _reconstruct_rc_path(

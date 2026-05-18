@@ -60,6 +60,22 @@ gradient = nemo.grad(torch.tensor([[0.1, -0.3]]))
 - `TCNNHashGridHeightField` is optional and requires `tinycudann`.
 - `TiledHeightField` fits overlapping local models and blends them smoothly at inference time.
 
+
+## AirSim Data Collection
+
+The `moon_spiral_2_masked` dataset uses the following coordinate alignment between AirSim and the NeRF dataset:
+
+- **Start:** `(0, 0, 0)` AirSim
+- **Spiral Center:** `(524.38, 168.34, 0)` AirSim
+- **Goal:** `(1050.50, 323.84, -19.73)` AirSim
+
+**Transformation:**
+- `X_as = Y_ds + 524.38`
+- `Y_as = X_ds + 168.34`
+- `Z_as = Z_ds - 24.15`
+
+This mapping accounts for a 90-degree rotation and the vertical datum offset.
+
 ## CLI
 
 Fit a NEMo directly to a DEM:

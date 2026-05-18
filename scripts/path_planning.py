@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+import socket
+import subprocess
+import sys
+import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 import numpy as np
 import plotly.graph_objects as go
@@ -11,7 +16,14 @@ import torch
 import tyro
 
 from nemo import Nemo
-from nemo.path_planning import PathPlanningConfig, compute_path_metrics, config_payload, plan_path
+from nemo.path_planning import (
+    PathPlanningConfig,
+    build_traversability_grid,
+    compute_path_metrics,
+    config_payload,
+    plan_path,
+    sample_height_and_gradient_grid,
+)
 
 
 @dataclass
@@ -29,13 +41,16 @@ class PathPlanningArgs:
     num_waypoints: int = 48
     optimize_iterations: int = 250
     optimize_lr: float = 2e-2
-    terrain_height_weight: float = 1.0
+    terrain_height_weight: float = 0.0
     terrain_slope_weight: float = 0.5
     flatness_weight: float = 1.0
     smoothness_weight: float = 0.15
     length_weight: float = 0.05
-    astar_height_weight: float = 1.0
-    astar_slope_weight: float = 1.5
+    astar_height_weight: float = 0.0
+    astar_slope_weight: float = 2.0
+    astar_max_slope_deg: float = 20.0
+    astar_slope_reference_deg: float = 10.0
+    astar_slope_exponent: float = 2.0
     astar_step_weight: float = 1.0
     gravity: float = 9.81
     dt: float = 1.0
@@ -43,6 +58,10 @@ class PathPlanningArgs:
     surface_resolution_x: int = 256
     surface_resolution_y: int = 256
     surface_opacity: float = 0.92
+    preview_server: bool = True
+    preview_host: str = "127.0.0.1"
+    preview_port: int = 0
+    open_plot: bool = True
 
 
 def _default_output_dir(args: PathPlanningArgs, checkpoint_path: Path) -> Path:
@@ -81,19 +100,84 @@ def _path_to_trace(
     )
 
 
-def _build_figure(nemo: Nemo, result: object, args: PathPlanningArgs) -> go.Figure:
-    from nemo.path_planning import sample_height_and_gradient_grid
+def _path_to_trace_2d(
+    path_xy: np.ndarray,
+    *,
+    name: str,
+    color: str,
+    width: int,
+    show_markers: bool = False,
+) -> go.Scatter:
+    return go.Scatter(
+        x=path_xy[:, 0],
+        y=path_xy[:, 1],
+        mode="lines+markers" if show_markers else "lines",
+        line=dict(color=color, width=width),
+        marker=dict(size=5),
+        name=name,
+        hovertemplate="x=%{x:.4f}<br>y=%{y:.4f}<extra></extra>",
+        showlegend=False,
+    )
 
-    surface_x, surface_y, surface_z, _, _ = sample_height_and_gradient_grid(
+
+def _build_figure(nemo: Nemo, result: object, args: PathPlanningArgs) -> go.Figure:
+    surface_x, surface_y, surface_z, surface_gx, surface_gy = sample_height_and_gradient_grid(
         nemo,
         resolution_x=int(args.surface_resolution_x),
         resolution_y=int(args.surface_resolution_y),
         batch_size=int(args.batch_size),
     )
+    traversability = build_traversability_grid(
+        surface_z,
+        surface_gx,
+        surface_gy,
+        height_weight=float(args.astar_height_weight),
+        slope_weight=float(args.astar_slope_weight),
+        max_slope_deg=float(args.astar_max_slope_deg),
+        slope_reference_deg=float(args.astar_slope_reference_deg),
+        slope_exponent=float(args.astar_slope_exponent),
+    )
     fig = make_subplots(
         rows=1,
-        cols=1,
-        specs=[[{"type": "surface"}]],
+        cols=2,
+        specs=[[{"type": "xy"}, {"type": "surface"}]],
+        column_widths=[0.42, 0.58],
+        subplot_titles=("Traversability cost", "NEMo path planning"),
+    )
+    fig.add_trace(
+        go.Heatmap(
+            x=surface_x[0, :],
+            y=surface_y[:, 0],
+            z=traversability.heatmap,
+            colorscale="Viridis",
+            colorbar=dict(title="cost"),
+            hovertemplate="x=%{x:.4f}<br>y=%{y:.4f}<br>cost=%{z:.4f}<extra></extra>",
+            name="traversability",
+            showscale=True,
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        _path_to_trace_2d(
+            result.astar_path_xy if hasattr(result, "astar_path_xy") else result["astar_path_xy"],
+            name="A* path",
+            color="#c026d3",
+            width=2,
+            show_markers=True,
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        _path_to_trace_2d(
+            result.optimized_path_xy if hasattr(result, "optimized_path_xy") else result["optimized_path_xy"],
+            name="Optimized path",
+            color="#f59e0b",
+            width=4,
+        ),
+        row=1,
+        col=1,
     )
     fig.add_trace(
         go.Surface(
@@ -106,7 +190,7 @@ def _build_figure(nemo: Nemo, result: object, args: PathPlanningArgs) -> go.Figu
             name="terrain",
         ),
         row=1,
-        col=1,
+        col=2,
     )
     fig.add_trace(
         _path_to_trace(
@@ -120,7 +204,7 @@ def _build_figure(nemo: Nemo, result: object, args: PathPlanningArgs) -> go.Figu
             show_markers=True,
         ),
         row=1,
-        col=1,
+        col=2,
     )
     fig.add_trace(
         _path_to_trace(
@@ -130,7 +214,7 @@ def _build_figure(nemo: Nemo, result: object, args: PathPlanningArgs) -> go.Figu
             width=7,
         ),
         row=1,
-        col=1,
+        col=2,
     )
     fig.add_trace(
         _path_to_trace(
@@ -140,7 +224,7 @@ def _build_figure(nemo: Nemo, result: object, args: PathPlanningArgs) -> go.Figu
             width=10,
         ),
         row=1,
-        col=1,
+        col=2,
     )
     fig.add_trace(
         go.Scatter3d(
@@ -153,7 +237,7 @@ def _build_figure(nemo: Nemo, result: object, args: PathPlanningArgs) -> go.Figu
             showlegend=True,
         ),
         row=1,
-        col=1,
+        col=2,
     )
     fig.add_trace(
         go.Scatter3d(
@@ -166,8 +250,10 @@ def _build_figure(nemo: Nemo, result: object, args: PathPlanningArgs) -> go.Figu
             showlegend=True,
         ),
         row=1,
-        col=1,
+        col=2,
     )
+    fig.update_xaxes(title_text="x", scaleanchor="y", scaleratio=1, row=1, col=1)
+    fig.update_yaxes(title_text="y", row=1, col=1)
     fig.update_layout(
         title="NEMo Path Planning",
         template="plotly_white",
@@ -198,6 +284,37 @@ def _xyz_path_length(path_xyz: np.ndarray) -> float:
     return float(np.linalg.norm(np.diff(path_xyz, axis=0), axis=1).sum())
 
 
+def _find_free_port(host: str) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
+
+
+def _start_preview_server(
+    directory: Path,
+    *,
+    host: str,
+    port: int,
+) -> tuple[subprocess.Popen[bytes], str]:
+    port = int(port) if int(port) > 0 else _find_free_port(host)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "http.server",
+            str(port),
+            "--bind",
+            host,
+            "--directory",
+            str(directory),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return process, f"http://{host}:{port}"
+
+
 def _path_metrics(nemo: Nemo, path_xy: np.ndarray, cfg: PathPlanningConfig) -> dict[str, float]:
     metrics = compute_path_metrics(
         nemo,
@@ -226,6 +343,11 @@ def main(args: PathPlanningArgs) -> None:
         num_waypoints=int(args.num_waypoints),
         optimize_iterations=int(args.optimize_iterations),
         optimize_lr=float(args.optimize_lr),
+        astar_height_weight=float(args.astar_height_weight),
+        astar_slope_weight=float(args.astar_slope_weight),
+        astar_max_slope_deg=float(args.astar_max_slope_deg),
+        astar_slope_reference_deg=float(args.astar_slope_reference_deg),
+        astar_slope_exponent=float(args.astar_slope_exponent),
         astar_step_weight=float(args.astar_step_weight),
         terrain_height_weight=float(args.terrain_height_weight),
         terrain_slope_weight=float(args.terrain_slope_weight),
@@ -257,6 +379,26 @@ def main(args: PathPlanningArgs) -> None:
     np.save(run_dir / "initial_path_xyz.npy", result.initial_path_xyz)
     np.save(run_dir / "optimized_path_xyz.npy", result.optimized_path_xyz)
     np.save(run_dir / "astar_path_xy.npy", result.astar_path_xy)
+    _, _, astar_z, astar_gx, astar_gy = sample_height_and_gradient_grid(
+        nemo,
+        resolution_x=cfg.astar_grid_resolution_x,
+        resolution_y=cfg.astar_grid_resolution_y,
+        batch_size=cfg.batch_size,
+    )
+    traversability_grid = build_traversability_grid(
+        astar_z,
+        astar_gx,
+        astar_gy,
+        height_weight=cfg.astar_height_weight,
+        slope_weight=cfg.astar_slope_weight,
+        max_slope_deg=cfg.astar_max_slope_deg,
+        slope_reference_deg=cfg.astar_slope_reference_deg,
+        slope_exponent=cfg.astar_slope_exponent,
+    )
+    np.save(run_dir / "astar_slope_deg.npy", traversability_grid.slope_deg)
+    np.save(run_dir / "astar_traversable.npy", traversability_grid.traversable)
+    np.save(run_dir / "astar_traversability_cost.npy", traversability_grid.cost)
+    np.save(run_dir / "astar_traversability_heatmap.npy", traversability_grid.heatmap)
 
     path_metrics = {
         "astar": _path_metrics(nemo, result.astar_path_xy, cfg),
@@ -266,6 +408,11 @@ def main(args: PathPlanningArgs) -> None:
             "initial_objective": float(result.initial_objective),
             "final_objective": float(result.final_objective),
             "cost_history": [float(value) for value in result.cost_history],
+        },
+        "traversability": {
+            "traversable_fraction": float(np.mean(traversability_grid.traversable)),
+            "max_slope_deg": float(np.nanmax(traversability_grid.slope_deg)),
+            "mean_finite_cost": float(np.mean(traversability_grid.cost[np.isfinite(traversability_grid.cost)])),
         },
     }
 
@@ -290,6 +437,18 @@ def main(args: PathPlanningArgs) -> None:
     print(f"Saved outputs to {run_dir}")
     print(f"Saved plot to {output_html}")
     print(f"Saved metrics to {run_dir / 'path_metrics.json'}")
+    if bool(args.preview_server):
+        server_process, base_url = _start_preview_server(
+            output_html.parent.resolve(),
+            host=str(args.preview_host),
+            port=int(args.preview_port),
+        )
+        plot_url = f"{base_url}/{quote(output_html.name)}"
+        print(f"Plot preview: {plot_url}")
+        print(f"Preview server PID: {server_process.pid}")
+        if bool(args.open_plot):
+            opened = webbrowser.open(plot_url, new=2)
+            print(f"Auto-open requested: {'opened' if opened else 'no browser reported success'}")
 
 
 if __name__ == "__main__":
