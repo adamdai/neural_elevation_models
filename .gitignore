@@ -1,6 +1,9 @@
 data/
 output/
+outputs/
 AGENTS.md
+*.npy
+*.npz
 
 __pycache__/
 *.py[cod]
@@ -8,3 +11,4 @@ __pycache__/
 .vscode/
 .venv/
 venv/
+
