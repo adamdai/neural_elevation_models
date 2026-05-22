@@ -1,0 +1,418 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=0.85in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\definecolor{codebg}{RGB}{246,248,250}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  breaklines=true,
+  columns=fullflexible
+}
+
+\title{Terrain-Aware Planner: Concept, Optimization, and Trajectory Equations}
+\author{NEMo / Neural Elevation Models}
+\date{May 21, 2026}
+
+\begin{document}
+\maketitle
+
+\section{Purpose and Concept}
+
+The terrain-aware planner in \texttt{nemo/terrain\_aware\_planner.py} optimizes a 2D path over a learned NEMo height field. The terrain is modeled as a differentiable surface
+\[
+  z = h(x,y),
+\]
+where \((x,y)\) are dataset-frame horizontal coordinates and \(z\) is terrain elevation. The planner does not optimize a free 3D curve. Instead, it optimizes horizontal control points, samples a smooth path through those controls, then asks the height field for the corresponding terrain elevation and local gradient at every sampled point.
+
+The planner is intended to convert an initial seed path, usually from A* or hand-selected waypoints, into a path that is more feasible for a rover or low-altitude terrain follower. Feasibility is represented by differentiable proxy costs for:
+
+\begin{itemize}[leftmargin=*]
+  \item total 3D path length,
+  \item uphill slope,
+  \item downhill slope,
+  \item cross-track slope or roll demand,
+  \item throttle demand from gravity along the path,
+  \item steering demand from curvature,
+  \item path and control-point smoothness.
+\end{itemize}
+
+The endpoint positions are fixed. Only interior control points move. This preserves the requested start and goal while allowing the path to bend around terrain hazards such as steep crater walls or hills.
+
+\section{Height Field Interaction}
+
+The planner interacts with NEMo through \texttt{nemo.field.h(xy)} and \texttt{nemo.field.bounds}. For a sampled path
+\[
+  \mathbf{p}_i = (x_i,y_i),
+\]
+the terrain elevation is
+\[
+  z_i = h(x_i,y_i).
+\]
+
+The planner can compute height gradients in two modes. The default mode is
+\texttt{gradient\_mode="finite\_difference"}, exposed in the crater-entry driver as
+\texttt{--gradients fd}. It computes central finite differences:
+\[
+  h_x(x_i,y_i) \approx
+  \frac{h(x_i+\epsilon,y_i)-h(x_i-\epsilon,y_i)}{2\epsilon},
+  \qquad
+  h_y(x_i,y_i) \approx
+  \frac{h(x_i,y_i+\epsilon)-h(x_i,y_i-\epsilon)}{2\epsilon}.
+\]
+
+If \texttt{finite\_difference\_eps} is not set, the code chooses
+\[
+  \epsilon = \max \left( \frac{\min(x_{\max}-x_{\min},\,y_{\max}-y_{\min})}{512},\;10^{-3} \right).
+\]
+
+The alternative mode is \texttt{gradient\_mode="autograd"}, exposed as
+\texttt{--gradients autograd}. In that mode, the planner computes
+\[
+  \nabla h_i =
+  \frac{\partial h(x_i,y_i)}{\partial (x_i,y_i)}
+\]
+with \texttt{torch.autograd.grad}. The implementation keeps the query tensor
+connected to the sampled path so the final objective can still backpropagate to
+the B-spline control points.
+
+The gradient vector is
+\[
+  \nabla h_i = [h_x(x_i,y_i),\;h_y(x_i,y_i)].
+\]
+
+This gradient is the key link between the learned surface and the vehicle-aware costs: it defines terrain slope magnitude, slope along the path direction, and lateral slope across the path.
+
+\section{Path Parameterization}
+
+The optimizer does not directly move every sampled point. It optimizes a compact set of B-spline control points:
+\[
+  \mathbf{c}_0,\mathbf{c}_1,\ldots,\mathbf{c}_{M-1}.
+\]
+
+The first and last controls are fixed to the seed start and goal:
+\[
+  \mathbf{c}_0 = \mathbf{p}_{start}, \qquad
+  \mathbf{c}_{M-1} = \mathbf{p}_{goal}.
+\]
+
+The interior controls are trainable:
+\[
+  \theta = \{\mathbf{c}_1,\ldots,\mathbf{c}_{M-2}\}.
+\]
+
+A clamped B-spline basis \(B_{ij}\) samples \(N\) path points from those controls:
+\[
+  \mathbf{p}_i = \sum_{j=0}^{M-1} B_{ij}\mathbf{c}_j.
+\]
+
+The implementation explicitly overwrites the first and last sampled points with the first and last controls, guaranteeing endpoint interpolation even after numerical basis normalization.
+
+\section{Differentiable Trajectory Quantities}
+
+For every sampled point \(\mathbf{p}_i=(x_i,y_i)\), the planner builds a differentiable trajectory dictionary. The derivatives below are discrete derivatives with respect to sample index in the implementation.
+
+\subsection{Tangent, Lateral Axis, and Yaw}
+
+Let
+\[
+  \dot{\mathbf{p}}_i = [\dot{x}_i,\dot{y}_i]
+\]
+be the first discrete derivative of the sampled path. The planar speed in sample-index units is
+\[
+  q_i = \|\dot{\mathbf{p}}_i\|_2.
+\]
+
+The unit tangent and left-lateral axes are
+\[
+  \mathbf{t}_i = \frac{\dot{\mathbf{p}}_i}{\max(q_i,10^{-8})},
+  \qquad
+  \mathbf{l}_i = [-t_{iy},\;t_{ix}].
+\]
+
+The yaw angle is
+\[
+  \psi_i = \operatorname{atan2}(\dot{y}_i,\dot{x}_i).
+\]
+
+\subsection{Curvature and Steering}
+
+Let the second discrete derivative be
+\[
+  \ddot{\mathbf{p}}_i = [\ddot{x}_i,\ddot{y}_i].
+\]
+
+The planar curvature is
+\[
+  \kappa_i =
+  \frac{\dot{x}_i\ddot{y}_i - \dot{y}_i\ddot{x}_i}
+       {(\dot{x}_i^2+\dot{y}_i^2)^{3/2}}.
+\]
+
+The steering proxy uses a bicycle-model approximation with wheelbase \(L\):
+\[
+  \delta_i = \arctan(L\kappa_i).
+\]
+
+\subsection{Slope Magnitude}
+
+The terrain slope magnitude in radians is
+\[
+  \alpha_i = \arctan(\|\nabla h_i\|_2).
+\]
+
+This is reported in diagnostics as degrees:
+\[
+  \alpha_{deg,i} = \frac{180}{\pi}\alpha_i.
+\]
+
+\subsection{Along-Track and Cross-Track Slope}
+
+The grade along the vehicle forward direction is
+\[
+  g^{along}_i = \nabla h_i \cdot \mathbf{t}_i.
+\]
+
+The grade toward the left lateral axis is
+\[
+  g^{cross}_i = \nabla h_i \cdot \mathbf{l}_i.
+\]
+
+The planner also stores angle forms:
+\[
+  \beta^{along}_i = \arctan(g^{along}_i),
+  \qquad
+  \beta^{cross}_i = \arctan(g^{cross}_i).
+\]
+
+Positive \(\beta^{along}\) means uphill motion along the direction of travel. Negative \(\beta^{along}\) means downhill motion. The magnitude of \(\beta^{cross}\) is a roll-demand proxy.
+
+\subsection{Throttle Proxy}
+
+The planner uses a simplified gravity-along-track acceleration proxy:
+\[
+  a^{req}_i = g\,g^{along}_i,
+\]
+where \(g\) is the configured gravity. It then normalizes by the configured maximum throttle acceleration \(a_{\max}\):
+\[
+  u^{thr}_i = \frac{a^{req}_i}{a_{\max}}.
+\]
+
+This is not a full vehicle dynamics model. It is a differentiable proxy that penalizes routes requiring large acceleration to climb or control descent.
+
+\subsection{3D Length}
+
+The sampled terrain-following 3D segment length is
+\[
+  \Delta s_i =
+  \sqrt{(x_{i+1}-x_i)^2+(y_{i+1}-y_i)^2+(z_{i+1}-z_i)^2}.
+\]
+
+The path length term is
+\[
+  L_{3D} = \sum_{i=0}^{N-2}\Delta s_i.
+\]
+
+\section{Objective Function}
+
+The raw objective terms are computed in \texttt{compute\_raw\_costs}. With normalization enabled, each term is divided by its initial-path value before weighting. The total objective is:
+\[
+\begin{aligned}
+  J ={}&
+  w_L \frac{J_L}{\bar{J}_L}
+  + w_U \frac{J_U}{\bar{J}_U}
+  + w_D \frac{J_D}{\bar{J}_D}
+  + w_C \frac{J_C}{\bar{J}_C} \\
+  &+ w_T \frac{J_T}{\bar{J}_T}
+  + w_S \frac{J_S}{\bar{J}_S}
+  + w_R \frac{J_R}{\bar{J}_R}.
+\end{aligned}
+\]
+
+Here \(\bar{J}\) values are initial-path normalizers when \texttt{normalize\_costs=True}; otherwise they are 1.
+
+\subsection{Length Cost}
+
+\[
+  J_L = L_{3D}.
+\]
+
+\subsection{Directional Slope Costs}
+
+The uphill angle is
+\[
+  u_i = \max(\beta^{along}_i,0).
+\]
+
+The downhill angle is
+\[
+  d_i = \max(-\beta^{along}_i,0).
+\]
+
+The cross-track angle is
+\[
+  c_i = |\beta^{cross}_i|.
+\]
+
+For a directional angle \(r_i\) and limit \(r_{\max}\), the planner uses:
+\[
+  J(r,r_{\max}) =
+  \operatorname{mean}\left[\left(\frac{r_i}{r_{\max}}\right)^2\right]
+  +
+  \operatorname{mean}\left[
+    \left(\frac{\max(r_i-r_{\max},0)}{r_{\max}}\right)^2
+  \right].
+\]
+
+Therefore:
+\[
+  J_U = J(u,\beta^{up}_{\max}),\qquad
+  J_D = J(d,\beta^{down}_{\max}),\qquad
+  J_C = J(c,\beta^{cross}_{\max}).
+\]
+
+The first part discourages slope even below the limit. The second part adds an extra soft violation penalty after the limit.
+
+\subsection{Throttle Cost}
+
+\[
+  J_T =
+  \operatorname{mean}\left[(u^{thr}_i)^2\right]
+  +
+  \operatorname{mean}\left[\max(|u^{thr}_i|-1,0)^2\right].
+\]
+
+The first term penalizes throttle demand generally. The second term penalizes values beyond the nominal normalized limit.
+
+\subsection{Steering Cost}
+
+\[
+  J_S =
+  \operatorname{mean}\left[\left(\frac{\delta_i}{\delta_{\max}}\right)^2\right]
+  +
+  \operatorname{mean}\left[
+    \left(\frac{\max(|\delta_i|-\delta_{\max},0)}{\delta_{\max}}\right)^2
+  \right].
+\]
+
+\subsection{Smoothness Cost}
+
+The smoothness term penalizes second differences in both sampled path points and B-spline controls:
+\[
+  J_R =
+  \operatorname{mean}\left[\|\mathbf{p}_{i+2}-2\mathbf{p}_{i+1}+\mathbf{p}_{i}\|_2^2\right]
+  +
+  \operatorname{mean}\left[\|\mathbf{c}_{j+2}-2\mathbf{c}_{j+1}+\mathbf{c}_{j}\|_2^2\right].
+\]
+
+\section{Optimization Procedure}
+
+The optimization loop in \texttt{optimize\_terrain\_aware\_path} proceeds as follows:
+
+\begin{enumerate}[leftmargin=*]
+  \item Validate the seed path shape \((N,2)\) and finite numeric values.
+  \item Initialize B-spline control points by arc-length sampling the seed path, unless explicit initial controls are provided.
+  \item Build a clamped B-spline basis with \texttt{num\_samples} rows.
+  \item Freeze the start and goal control points.
+  \item Create an Adam optimizer over the interior controls.
+  \item Sample the initial path and compute raw initial costs.
+  \item Build cost normalizers from the initial raw costs if normalization is enabled.
+  \item For each iteration:
+    \begin{enumerate}
+      \item concatenate fixed start, trainable interior controls, and fixed goal;
+      \item sample the B-spline path;
+      \item query the height field and gradients;
+      \item compute yaw, curvature, slope, steering, throttle, length, and smoothness;
+      \item form the weighted objective;
+      \item backpropagate through the differentiable path and terrain queries;
+      \item update interior controls using Adam;
+      \item clamp interior controls to \texttt{nemo.field.bounds}, optionally with \texttt{bounds\_margin};
+      \item re-evaluate the candidate path and retain the best observed interior controls.
+    \end{enumerate}
+  \item Reconstruct the best path, query final heights, and return diagnostics plus trajectory arrays.
+\end{enumerate}
+
+In either gradient mode, gradients flow through the height-field evaluations with respect to the query coordinates. This allows the optimizer to move path controls in directions that reduce terrain-induced costs. In finite-difference mode, this happens through the shifted \(h(x,y)\) calls. In autograd mode, it happens through the local derivative of \(h\) at each sampled path point.
+
+\section{Diagnostics and Outputs}
+
+The result object contains:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{initial\_path\_xy}, \texttt{optimized\_path\_xy}: sampled 2D paths.
+  \item \texttt{initial\_path\_xyz}, \texttt{optimized\_path\_xyz}: terrain-grounded 3D paths using \(z=h(x,y)\).
+  \item \texttt{control\_points\_initial}, \texttt{control\_points\_optimized}: B-spline controls.
+  \item \texttt{initial\_diagnostics}, \texttt{optimized\_diagnostics}: scalar cost and feasibility metrics.
+  \item \texttt{cost\_history}: candidate objective value per iteration.
+  \item \texttt{trajectory}: arrays for \(x,y,z,\psi,\kappa,\alpha,\beta^{along},\beta^{cross},v,\delta,u^{thr}\).
+\end{itemize}
+
+Diagnostics include total cost, each raw cost term, 3D length, mean/max total slope, mean/max uphill and downhill angles, mean/max cross-track angle, mean/max throttle magnitude, and mean/max steering angle.
+
+\section{Relationship to Dense Reference Trajectories}
+
+The terrain-aware planner returns an optimized terrain-grounded path. For AirSim-style tracking, \texttt{nemo/airsim\_trajectory.py} can resample that 3D path into a dense reference trajectory. That post-processing computes:
+
+\[
+  \psi_i = \operatorname{atan2}\left(\frac{dy}{ds}, \frac{dx}{ds}\right),
+\]
+\[
+  \kappa_i =
+  \frac{x'_i y''_i-y'_i x''_i}{(x_i'^2+y_i'^2)^{3/2}},
+\]
+\[
+  \theta_i = \operatorname{atan2}(\Delta z_i,\Delta s_{xy,i}),
+\]
+where \(\theta_i\) is path pitch. The speed profile is limited by nominal speed, curvature, yaw rate, slope, and acceleration constraints:
+\[
+  v_{curve,i} = \sqrt{\frac{a^{lat}_{\max}}{|\kappa_i|}},
+  \qquad
+  v_{yaw,i} = \frac{\omega_{\max}}{|\kappa_i|},
+\]
+\[
+  v_{slope,i} =
+  \frac{v_{nom}}{1+k_{slope}|\tan(\theta_i)|}.
+\]
+
+The reference trajectory stores states
+\[
+  [x,y,z,\psi,\theta,\phi,v,\dot{\psi}]
+\]
+and controls
+\[
+  [v_{cmd},\dot{\psi}_{cmd},a_{cmd}].
+\]
+
+\section{Implementation Map}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Concept & Implementation \\
+\midrule
+Planner config and result dataclasses & \texttt{nemo/terrain\_aware\_planner.py} \\
+B-spline initialization and sampling & \texttt{initialize\_control\_points}, \texttt{bspline\_basis}, \texttt{sample\_path} \\
+Height and gradient query & \texttt{path\_xyz}, \texttt{terrain\_grad}, \texttt{finite\_difference\_grad}, \texttt{autograd\_grad} \\
+Trajectory quantities & \texttt{trajectory\_from\_path} \\
+Objective terms & \texttt{compute\_raw\_costs}, \texttt{\_weighted\_total} \\
+Diagnostics & \texttt{make\_diagnostics}, \texttt{\_trajectory\_to\_numpy} \\
+Crater-entry driver & \texttt{scripts/terrain\_aware\_planner.py} \\
+Dense AirSim reference generation & \texttt{nemo/airsim\_trajectory.py} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Practical Interpretation}
+
+The planner is best understood as a differentiable post-processor for a geometric seed path. A* or manual waypoints provide a globally reasonable route. The B-spline optimizer then uses the NEMo height field to locally trade distance against terrain feasibility. If the seed crosses a steep hill, the uphill/downhill/throttle terms push the path sideways. If the path turns too tightly, the steering and smoothness terms spread the turn. If the terrain rolls sharply across the vehicle body, the cross-track term discourages traversing side-slopes.
+
+The output is therefore not simply the shortest path over the height field. It is the lowest-cost compromise between length, terrain slope, actuator proxies, and smoothness under fixed start/goal constraints.
+
+\end{document}

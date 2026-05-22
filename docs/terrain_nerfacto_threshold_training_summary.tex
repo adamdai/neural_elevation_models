@@ -1,0 +1,417 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=0.85in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\definecolor{codebg}{RGB}{246,248,250}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  breaklines=true,
+  columns=fullflexible
+}
+
+\title{Terrain-Nerfacto Training: Opacity-Threshold Height Supervision}
+\author{Terrain-Nerf / NEMo}
+\date{May 21, 2026}
+
+\begin{document}
+\setlength{\emergencystretch}{3em}
+\maketitle
+
+\section{Purpose and Concept}
+
+Terrain-Nerfacto extends Nerfacto with a jointly trained NEMo terrain height field
+\[
+  z = h(x,y).
+\]
+The NeRF density field learns volumetric scene geometry from images, while the NEMo height field learns a compact single-valued terrain surface in raw dataset coordinates. The current default method configuration in \texttt{terrain\_nerf/config.py} uses:
+
+\begin{lstlisting}
+height_supervision_mode = "threshold"
+height_supervision_rays = "vertical"
+height_field_type = "smooth-grid"
+\end{lstlisting}
+
+Threshold supervision uses NeRF opacity as a self-supervised geometric signal. It renders rays through the current NeRF density, finds the first sampled ray depth where cumulative opacity crosses a fixed threshold, converts that hit point back into raw dataset coordinates, and trains NEMo so that \(h(x,y)\) matches the hit height.
+
+This makes the height field learn from NeRF/ray evidence rather than direct high-resolution GT DEM supervision. The DEM point cloud is still loaded for height-field bounds, output normalization, optional anchors, metrics, and optional NeRF/DEM coupling losses.
+
+\section{Training Components}
+
+The implementation is centered on these files in \texttt{/home/addai/NeRF/terrain-nerf}:
+
+\begin{center}
+\begin{tabular}{p{0.34\linewidth}p{0.56\linewidth}}
+\toprule
+Concept & Implementation \\
+\midrule
+Method defaults & \texttt{terrain\_nerf/config.py} \\
+Pipeline wiring & \texttt{terrain\_nerf/pipeline.py} \\
+Raw/world coordinate transforms & \texttt{terrain\_nerf/datamanager.py} \\
+Nerfacto + NEMo model & \texttt{terrain\_nerf/model.py} \\
+Threshold depth extraction & \texttt{\_threshold\_depth} \\
+Height supervision targets & \texttt{\_depth\_supervision\_targets} \\
+Height loss & \texttt{get\_loss\_dict} threshold branch \\
+Optional density mask & \texttt{\_height\_density\_mask} \\
+Vertical NeRF depth diagnostics & \texttt{scripts/render\_vertical\_nerf\_depth.py} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Coordinate Frames}
+
+Terrain-Nerfacto has to keep two coordinate systems aligned:
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Raw dataset/world frame}: DEM point cloud and NEMo height field live here.
+  \item \textbf{Nerfstudio training frame}: camera rays, NeRF sampling, and Nerfacto density live here.
+\end{itemize}
+
+The datamanager builds transforms from \texttt{transforms.json}, Nerfstudio dataparser transform, and dataparser scale:
+
+\[
+  \mathbf{x}_{nerf} = T_{raw\rightarrow nerf}(\mathbf{x}_{raw}),
+  \qquad
+  \mathbf{x}_{raw} = T_{nerf\rightarrow raw}(\mathbf{x}_{nerf}).
+\]
+
+The pipeline loads \texttt{dem\_pc.npy}, gives the model both transforms, and initializes NEMo bounds from the DEM point cloud:
+\[
+  x \in [x_{\min},x_{\max}], \qquad y \in [y_{\min},y_{\max}].
+\]
+
+The height field therefore predicts raw-world elevation, even when the supervision target comes from a NeRF ray sampled in Nerfstudio coordinates.
+
+\section{Height Field Initialization}
+
+When \texttt{set\_dem\_point\_cloud} runs, the model:
+
+\begin{enumerate}[leftmargin=*]
+  \item filters finite XYZ DEM points;
+  \item sets height-field XY bounds from DEM min/max;
+  \item builds either a \texttt{SmoothGridHeightField} or \texttt{ResidualMLPHeightField};
+  \item configures output normalization from a subsample of DEM heights;
+  \item optionally builds a coarse DEM anchor grid;
+  \item optionally caches a regular DEM grid for ray/DEM depth losses.
+\end{enumerate}
+
+In threshold mode, the DEM point cloud is not the main per-step height target. It supplies the domain and normalization needed for stable NEMo learning.
+
+\section{Standard NeRF Rendering Step}
+
+For each training batch, Terrain-Nerfacto follows the usual Nerfacto rendering path:
+
+\begin{enumerate}[leftmargin=*]
+  \item receive a camera ray bundle;
+  \item apply camera optimization if training;
+  \item sample points along rays with the proposal sampler;
+  \item evaluate field density and color;
+  \item convert density to alpha weights;
+  \item render RGB, depth, expected depth, and accumulation;
+  \item compute standard Nerfacto losses from the parent class.
+\end{enumerate}
+
+For ray sample \(i\), Nerfacto-style volumetric rendering uses density-derived opacity weights \(w_i\). These are the per-sample contributions used by RGB/depth rendering and by threshold height supervision.
+
+\section{Opacity-Threshold Supervision}
+
+\subsection{Ray Choice}
+
+Threshold supervision can use either camera rays or vertical rays:
+
+\[
+  \texttt{height\_supervision\_rays} \in \{\texttt{camera},\texttt{vertical}\}.
+\]
+
+With \texttt{camera}, the same camera rays used for image training also produce height targets. With \texttt{vertical}, the model samples random raw-world \((x,y)\) locations inside the height-field bounds, starts above the terrain, converts the ray into Nerfstudio coordinates, and points it downward in raw vertical direction.
+
+For vertical rays:
+\[
+  \mathbf{o}_{raw} = [x,\;y,\;z_{\max}+20],
+\]
+\[
+  \mathbf{d}_{nerf} =
+  \frac{
+    T_{raw\rightarrow nerf}([x,y,z_{\max}+19]) -
+    T_{raw\rightarrow nerf}([x,y,z_{\max}+20])
+  }{
+    \left\|
+    T_{raw\rightarrow nerf}([x,y,z_{\max}+19]) -
+    T_{raw\rightarrow nerf}([x,y,z_{\max}+20])
+    \right\|_2
+  }.
+\]
+
+This matters because a camera ray can hit terrain obliquely or be influenced by visibility, while a vertical ray asks the NeRF density field for a top-down terrain height signal at a sampled XY point.
+
+\subsection{Accumulated Opacity}
+
+For each supervision ray, the proposal sampler generates ray samples with midpoint depths
+\[
+  t_i = \frac{t_i^{start}+t_i^{end}}{2}.
+\]
+
+The density field produces volumetric weights \(w_i\). The cumulative opacity is:
+\[
+  C_i = \sum_{j=1}^{i} w_j.
+\]
+
+Given an absolute opacity threshold \(\tau\), configured by \texttt{threshold\_supervision\_value}, the threshold hit index is:
+\[
+  k = \min \{ i : C_i \ge \tau \}.
+\]
+
+The threshold depth is:
+\[
+  t_{\tau} = t_k.
+\]
+
+The implementation uses the first sample whose cumulative sum crosses \(\tau\):
+
+\begin{lstlisting}
+cdf = torch.cumsum(weights, dim=-2)
+hit = cdf >= threshold
+first_hit = hit.to(dtype=torch.int64).argmax(dim=-2, keepdim=True)
+t_depth = sample_depths.gather(dim=-2, index=first_hit).squeeze(-2)
+\end{lstlisting}
+
+\subsection{Validity Gate}
+
+A threshold target is accepted only when the ray has enough total accumulation:
+\[
+  A = C_{last}.
+\]
+
+The effective minimum accumulation is:
+\[
+  A_{\min} =
+  \max(\texttt{threshold\_supervision\_min\_accumulation},\;\tau).
+\]
+
+The target is valid if:
+\[
+  A \ge A_{\min},
+\]
+the target point is finite, and the raw-world XY point lies inside the NEMo height-field bounds.
+
+\section{Target Point Construction}
+
+The threshold depth is converted to a Nerfstudio point along the supervision ray:
+\[
+  \mathbf{p}_{nerf} = \mathbf{o}_{nerf} + t_{\tau}\mathbf{d}_{nerf}.
+\]
+
+Then the model maps it back to raw dataset coordinates:
+\[
+  \mathbf{p}_{raw} = T_{nerf\rightarrow raw}(\mathbf{p}_{nerf})
+  =
+  [x_{\tau},y_{\tau},z_{\tau}].
+\]
+
+The NEMo training target is the raw-world height:
+\[
+  h(x_{\tau},y_{\tau}) \rightarrow z_{\tau}.
+\]
+
+The model stores these targets in \texttt{outputs["height\_depth\_points\_raw"]} and the validity mask in \texttt{outputs["height\_depth\_valid"]}.
+
+\section{Height Loss}
+
+For valid threshold targets, the height field produces normalized training predictions:
+\[
+  \hat{z}_{norm} = h_{train}(x_{\tau},y_{\tau}).
+\]
+
+The target height is also converted into the height field's training target space:
+\[
+  z_{norm} = \operatorname{target}_{train}(x_{\tau},y_{\tau},z_{\tau}).
+\]
+
+Threshold mode uses Huber loss:
+\[
+  \mathcal{L}_{height}
+  =
+  \operatorname{Huber}_{\delta_{norm}}
+  \left(
+    \hat{z}_{norm} - z_{norm}
+  \right).
+\]
+
+The configured Huber delta is specified in raw-world vertical units:
+\[
+  \delta_{raw} = \texttt{threshold\_supervision\_huber\_delta}.
+\]
+
+The implementation converts it into normalized height-field units:
+\[
+  \delta_{norm} =
+  \frac{\delta_{raw}}{\texttt{height\_field.output\_scale}}.
+\]
+
+The final loss term added to the Nerfacto losses is:
+\[
+  \mathcal{L}_{total}
+  =
+  \mathcal{L}_{nerfacto}
+  +
+  \lambda_h \mathcal{L}_{height}
+  +
+  \mathcal{L}_{optional},
+\]
+where
+\[
+  \lambda_h = \texttt{height\_loss\_mult}.
+\]
+
+\section{Why Threshold Instead of Expected Depth}
+
+Expected depth averages over all density along a ray:
+\[
+  t_{expected} =
+  \frac{\sum_i w_i t_i}{\sum_i w_i}.
+\]
+
+That can be biased by broad density clouds, floaters, or multiple surfaces. Weighted median and quantile statistics reduce some averaging artifacts, but still choose a relative fraction of the ray's total accumulation:
+\[
+  C_i \ge qA.
+\]
+
+Threshold supervision instead uses an absolute opacity crossing:
+\[
+  C_i \ge \tau.
+\]
+
+For terrain, this tends to represent the first confident surface contact along the ray. In vertical-ray mode, it is especially aligned with the desired product: a top-down terrain height field.
+
+\section{Masking Options}
+
+\subsection{Image and Dataset Masks}
+
+The datamanager remains Nerfstudio-compatible and can use image masks from the dataset/parser stack. These masks influence which camera rays contribute to standard image training. They are separate from the learned height-field density mask described below.
+
+\subsection{Density Height Mask}
+
+Terrain-Nerfacto can optionally couple the NeRF density field to the learned height field during forward rendering:
+
+\begin{lstlisting}
+enable_density_height_mask = True
+height_mask_margin = ...
+height_mask_softness = ...
+\end{lstlisting}
+
+For every NeRF sample, the model converts the sample position to raw coordinates and predicts the NEMo height at the sample XY:
+\[
+  \hat{z} = h(x,y).
+\]
+
+It defines clearance:
+\[
+  c = \hat{z} + m - z_{sample},
+\]
+where \(m=\texttt{height\_mask\_margin}\).
+
+With a hard mask:
+\[
+  M =
+  \begin{cases}
+    1, & c \ge 0,\\
+    0, & c < 0.
+  \end{cases}
+\]
+
+With a soft mask:
+\[
+  M = \sigma\left(\frac{c}{s}\right),
+\]
+where \(s=\texttt{height\_mask\_softness}\).
+
+The density is multiplied by this mask:
+\[
+  \sigma'(\mathbf{x}) = M(\mathbf{x})\,\sigma(\mathbf{x}).
+\]
+
+Interpretation: samples above the learned terrain surface can be suppressed, with optional margin and softness. This is a strong coupling from NEMo back into NeRF density, so it should be used carefully. If NEMo is biased early in training, the mask can remove density needed by NeRF to recover.
+
+\section{Coupling Options}
+
+Terrain-Nerfacto supports multiple levels of coupling between NeRF, NEMo, and DEM data:
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{One-way NeRF to NEMo}: threshold/depth supervision trains NEMo from rendered NeRF geometry. This is the default threshold path.
+  \item \textbf{NEMo to NeRF density masking}: \texttt{enable\_density\_height\_mask} uses the learned height field to suppress density above the terrain.
+  \item \textbf{DEM to NEMo direct supervision}: \texttt{height\_supervision\_mode="dem"} trains NEMo from sampled DEM points.
+  \item \textbf{DEM anchor with depth mode}: depth mode can add a coarse DEM anchor using \texttt{depth\_supervision\_dem\_anchor\_mpp} and \texttt{depth\_supervision\_dem\_anchor\_loss\_mult}.
+  \item \textbf{DEM to NeRF depth loss}: \texttt{nerf\_dem\_depth\_loss\_mult > 0} supervises NeRF expected depth against ray/DEM intersections.
+  \item \textbf{Height regularization}: \texttt{height\_tv\_loss\_mult} and \texttt{height\_curvature\_loss\_mult} smooth the NEMo surface.
+\end{itemize}
+
+For experiments that must learn from NeRF/ray evidence alone, the direct high-resolution DEM losses should be treated as optional anchors or diagnostics rather than the primary training signal.
+
+\section{Training Step Summary}
+
+One threshold-supervised training step can be summarized as:
+
+\begin{enumerate}[leftmargin=*]
+  \item Sample a batch of camera rays for standard Nerfacto image training.
+  \item Render RGB, depth, expected depth, and accumulation through the current density field.
+  \item If threshold height supervision is active, choose camera rays or generate vertical rays.
+  \item Render density weights along the height-supervision rays.
+  \item Compute cumulative opacity \(C_i=\sum_{j\le i}w_j\).
+  \item Select the first depth \(t_\tau\) where \(C_i\ge\tau\).
+  \item Convert \(\mathbf{o}+t_\tau\mathbf{d}\) from Nerfstudio coordinates to raw-world coordinates.
+  \item Keep only finite, in-bounds, sufficiently accumulated targets.
+  \item Train NEMo with Huber loss against the valid raw-world hit heights.
+  \item Add optional TV/curvature, DEM, NeRF/DEM, or density-mask coupling terms depending on config.
+\end{enumerate}
+
+\section{Important Configuration Knobs}
+
+\begin{center}
+{\footnotesize
+\begin{tabular}{p{0.52\linewidth}p{0.38\linewidth}}
+\toprule
+Option & Meaning \\
+\midrule
+\texttt{height\_supervision\_mode} & \texttt{threshold}, \texttt{depth}, \texttt{quantile}, or \texttt{dem} \\
+\texttt{height\_supervision\_rays} & Use \texttt{vertical} or \texttt{camera} rays for depth/threshold targets \\
+\texttt{threshold\_supervision\_value} & Absolute opacity threshold \(\tau\) \\
+\texttt{threshold\_supervision\_min\_accumulation} & Minimum ray opacity required for valid targets \\
+\texttt{threshold\_supervision\_huber\_delta} & Raw-world Huber delta for height loss \\
+\texttt{height\_loss\_mult} & Weight on NEMo height supervision loss \\
+\texttt{enable\_density\_height\_mask} & Enable NEMo-to-NeRF density suppression \\
+\texttt{height\_mask\_margin} & Allow density up to this margin above NEMo \\
+\texttt{height\_mask\_softness} & Soft sigmoid transition width for density mask \\
+\texttt{nerf\_dem\_depth\_loss\_mult} & Optional direct DEM supervision on NeRF expected depth \\
+\texttt{height\_tv\_loss\_mult} & Optional NEMo total-variation smoothing \\
+\texttt{height\_curvature\_loss\_mult} & Optional NEMo curvature/Laplacian smoothing \\
+\bottomrule
+\end{tabular}
+}
+\end{center}
+
+\section{Diagnostics}
+
+Useful checks are:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{height\_depth\_valid\_fraction}: whether threshold rays are producing enough valid targets.
+  \item final \texttt{height\_field\_surface.html}: learned NEMo surface and optional GT DEM error heatmap.
+  \item vertical NeRF depth render: separates NeRF density geometry from NEMo height-field output.
+  \item GT DEM metrics: RMSE, MAE, max absolute error, bias, and 2D error heatmap when DEM is available.
+\end{itemize}
+
+The key diagnostic distinction is that NeRF vertical depth and NEMo height are separate signals. Threshold supervision transfers a surface estimate from NeRF density into NEMo, but density geometry can still be offset, broad, or artifact-prone while the learned height field is smoother or biased differently.
+
+\section{Practical Interpretation}
+
+Threshold-supervised Terrain-Nerfacto is a two-surface training system. The NeRF density field is the volumetric image-fitting model. The NEMo height field is a compact terrain prior trained from ray-derived surface hits. Opacity thresholding defines what counts as the first reliable NeRF surface. Vertical rays make that signal top-down and terrain-like. Masking and DEM losses can make the systems more tightly coupled, but they also increase the risk that one biased component constrains the other too early.
+
+\end{document}

@@ -34,7 +34,7 @@ from nemo.terrain_aware_planner import (
 )
 from scripts.compare_physical_objectives import dataset_to_airsim_path, sample_airsim_grid
 from scripts.crater_test import airsim_to_dataset, start_preview_server
-from scripts.crater_test_terrain_aware import (
+from scripts.terrain_aware_planner import (
     PATH_PLOT_Z_OFFSET_M,
     build_astar_seed,
     trajectory_metrics,
@@ -47,9 +47,69 @@ DEFAULT_CHECKPOINT = Path(
 )
 
 
-def build_planner_config() -> TerrainAwarePlannerConfig:
+def camera_from_controls(
+    *,
+    eye_distance: float,
+    yaw_deg: float,
+    pitch_deg: float,
+    pan_right: float,
+    pan_up: float,
+    pan_forward: float,
+) -> dict[str, dict[str, float]]:
+    eye = np.asarray([1.3, -1.5, 0.9], dtype=np.float64)
+    yaw = np.arctan2(eye[1], eye[0]) + np.deg2rad(float(yaw_deg))
+    pitch = np.arctan2(eye[2], np.linalg.norm(eye[:2])) + np.deg2rad(float(pitch_deg))
+    pitch = float(np.clip(pitch, np.deg2rad(-89.0), np.deg2rad(89.0)))
+
+    direction = np.asarray(
+        [
+            np.cos(pitch) * np.cos(yaw),
+            np.cos(pitch) * np.sin(yaw),
+            np.sin(pitch),
+        ],
+        dtype=np.float64,
+    )
+    camera_eye = direction * float(eye_distance)
+
+    world_up = np.asarray([0.0, 0.0, 1.0], dtype=np.float64)
+    right = np.cross(direction, world_up)
+    right_norm = np.linalg.norm(right)
+    if right_norm < 1e-8:
+        right = np.asarray([1.0, 0.0, 0.0], dtype=np.float64)
+    else:
+        right /= right_norm
+    up = np.cross(right, direction)
+    up /= np.linalg.norm(up)
+
+    center = right * float(pan_right) + up * float(pan_up) + direction * float(pan_forward)
+    return {
+        "eye": {"x": float(camera_eye[0]), "y": float(camera_eye[1]), "z": float(camera_eye[2])},
+        "up": {"x": float(up[0]), "y": float(up[1]), "z": float(up[2])},
+        "center": {"x": float(center[0]), "y": float(center[1]), "z": float(center[2])},
+    }
+
+
+def camera_from_json(value: str) -> dict[str, dict[str, float]]:
+    path = Path(value).expanduser()
+    text = path.read_text(encoding="utf-8") if path.exists() else value
+    payload = json.loads(text)
+    if "scene.camera" in payload:
+        payload = payload["scene.camera"]
+    if "camera" in payload and {"eye", "up", "center"}.issubset(payload["camera"]):
+        payload = payload["camera"]
+
+    camera: dict[str, dict[str, float]] = {}
+    for key in ("eye", "up", "center"):
+        if key not in payload:
+            raise ValueError(f"Camera JSON is missing '{key}'")
+        vector = payload[key]
+        camera[key] = {axis: float(vector[axis]) for axis in ("x", "y", "z")}
+    return camera
+
+
+def build_planner_config(gradient_mode: str = "finite_difference") -> TerrainAwarePlannerConfig:
     return TerrainAwarePlannerConfig(
-        num_control_points=100,
+        num_control_points=50,
         num_samples=1000,
         num_iters=1800,
         lr=0.25,
@@ -67,7 +127,8 @@ def build_planner_config() -> TerrainAwarePlannerConfig:
         w_crosstrack=0.3,
         w_throttle=0.36,
         w_steering=0.01,
-        w_smoothness=0.0,
+        w_smoothness=0.01,
+        gradient_mode=gradient_mode,
         bounds_margin=2.0,
         normalize_costs=True,
         verbose=True,
@@ -89,6 +150,16 @@ def build_animation_figure(
     goal_airsim: np.ndarray,
     show_markers: bool,
     eye_distance: float,
+    camera_yaw_deg: float,
+    camera_pitch_deg: float,
+    camera_pan_right: float,
+    camera_pan_up: float,
+    camera_pan_forward: float,
+    camera_json: str | None,
+    height: int,
+    width: int,
+    astar_line_width: float,
+    optimized_line_width: float,
 ) -> go.Figure:
     as_x, as_y, as_z, _slope = terrain
     fig = go.Figure()
@@ -104,6 +175,7 @@ def build_animation_figure(
             lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0, roughness=1.0, fresnel=0.0),
             colorbar=dict(title="Elevation<br>up (m)", thickness=16),
             name="NEMo surface",
+            showscale=False,
         ),
     )
 
@@ -111,14 +183,16 @@ def build_animation_figure(
     astar_color = "red"
     # opt_color = "#ff9900"
     opt_color = "orange"
-    paths: list[tuple[np.ndarray, str, str, str, int, str | None]] = [
-        (astar_airsim, "A* seed", astar_color, "lines+markers", 5, "dash")
+    paths: list[tuple[np.ndarray, str, str, str, float, str | None]] = [
+        (astar_airsim, "A* seed", astar_color, "lines+markers", astar_line_width, "dash")
     ]
     if current_airsim is not None:
-        paths.append((current_airsim, "optimized path", opt_color, "lines", 8, None))
+        paths.append(
+            (current_airsim, "optimized path", opt_color, "lines", optimized_line_width, None)
+        )
 
-    for path, name, color, mode, width, dash in paths:
-        line = dict(color=color, width=width)
+    for path, name, color, mode, line_width, dash in paths:
+        line = dict(color=color, width=line_width)
         if dash is not None:
             line["dash"] = dash
         fig.add_trace(
@@ -156,32 +230,39 @@ def build_animation_figure(
         )
 
     clean_axis = dict(
-        showgrid=False, zeroline=False, showline=False, showticklabels=False, title=""
+        showbackground=False,
+        backgroundcolor="black",
+        showgrid=False,
+        zeroline=False,
+        showline=False,
+        showticklabels=False,
+        title="",
     )
-    camera_direction = np.asarray([1.3, -1.5, 0.9], dtype=np.float64)
-    camera_direction /= np.linalg.norm(camera_direction)
-    camera_eye = camera_direction * float(eye_distance)
+    if camera_json:
+        camera = camera_from_json(camera_json)
+    else:
+        camera = camera_from_controls(
+            eye_distance=eye_distance,
+            yaw_deg=camera_yaw_deg,
+            pitch_deg=camera_pitch_deg,
+            pan_right=camera_pan_right,
+            pan_up=camera_pan_up,
+            pan_forward=camera_pan_forward,
+        )
     fig.update_layout(
-        height=1300,
-        width=1500,
+        height=height,
+        width=width,
         template="plotly_dark",
         paper_bgcolor="black",
         plot_bgcolor="black",
         margin=dict(l=0, r=0, t=0, b=0),
-        legend=dict(
-            orientation="h",
-            x=0.5,
-            y=0.98,
-            xanchor="center",
-            yanchor="top",
-            bgcolor="rgba(0,0,0,0.35)",
-        ),
+        showlegend=False,
         scene=dict(
             aspectmode="data",
             xaxis=clean_axis,
             yaxis=dict(autorange="reversed", **clean_axis),
             zaxis=clean_axis,
-            camera=dict(eye=dict(x=camera_eye[0], y=camera_eye[1], z=camera_eye[2])),
+            camera=camera,
         ),
     )
     return fig
@@ -208,6 +289,14 @@ def run_animated_optimization(
     scale: float,
     show_markers: bool,
     eye_distance: float,
+    camera_yaw_deg: float,
+    camera_pitch_deg: float,
+    camera_pan_right: float,
+    camera_pan_up: float,
+    camera_pan_forward: float,
+    camera_json: str | None,
+    astar_line_width: float,
+    optimized_line_width: float,
 ) -> dict[str, object]:
     seed = validate_path(astar_xy)
     controls_np = initialize_control_points(seed, cfg.num_control_points)
@@ -252,6 +341,16 @@ def run_animated_optimization(
             goal_airsim=goal_airsim,
             show_markers=show_markers,
             eye_distance=eye_distance,
+            camera_yaw_deg=camera_yaw_deg,
+            camera_pitch_deg=camera_pitch_deg,
+            camera_pan_right=camera_pan_right,
+            camera_pan_up=camera_pan_up,
+            camera_pan_forward=camera_pan_forward,
+            camera_json=camera_json,
+            height=height,
+            width=width,
+            astar_line_width=astar_line_width,
+            optimized_line_width=optimized_line_width,
         ),
         frames_dir / f"frame-{frame_index:05d}.png",
         width=width,
@@ -270,6 +369,16 @@ def run_animated_optimization(
             goal_airsim=goal_airsim,
             show_markers=show_markers,
             eye_distance=eye_distance,
+            camera_yaw_deg=camera_yaw_deg,
+            camera_pitch_deg=camera_pitch_deg,
+            camera_pan_right=camera_pan_right,
+            camera_pan_up=camera_pan_up,
+            camera_pan_forward=camera_pan_forward,
+            camera_json=camera_json,
+            height=height,
+            width=width,
+            astar_line_width=astar_line_width,
+            optimized_line_width=optimized_line_width,
         ),
         frames_dir / f"frame-{frame_index:05d}.png",
         width=width,
@@ -322,6 +431,16 @@ def run_animated_optimization(
                     goal_airsim=goal_airsim,
                     show_markers=show_markers,
                     eye_distance=eye_distance,
+                    camera_yaw_deg=camera_yaw_deg,
+                    camera_pitch_deg=camera_pitch_deg,
+                    camera_pan_right=camera_pan_right,
+                    camera_pan_up=camera_pan_up,
+                    camera_pan_forward=camera_pan_forward,
+                    camera_json=camera_json,
+                    height=height,
+                    width=width,
+                    astar_line_width=astar_line_width,
+                    optimized_line_width=optimized_line_width,
                 ),
                 frames_dir / f"frame-{frame_index:05d}.png",
                 width=width,
@@ -357,16 +476,68 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/path_opt_animation"))
-    parser.add_argument("--frame-every", type=int, default=10)
-    parser.add_argument("--num-iters", type=int, default=None)
+    parser.add_argument("--frame-every", type=int, default=1)
+    parser.add_argument("--num-iters", type=int, default=200)
     parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--width", type=int, default=1500)
-    parser.add_argument("--height", type=int, default=1300)
+    parser.add_argument("--width", type=int, default=2000)
+    parser.add_argument("--height", type=int, default=1500)
     parser.add_argument("--scale", type=float, default=1.0)
+    parser.add_argument("--astar-line-width", type=float, default=7.0)
+    parser.add_argument("--optimized-line-width", type=float, default=11.0)
+    parser.add_argument("--video-crf", type=float, default=14.0)
+    parser.add_argument("--video-encoded-format", type=str, default="yuv420p")
     parser.add_argument("--eye-distance", type=float, default=0.4)
+    parser.add_argument(
+        "--camera-yaw-deg",
+        type=float,
+        default=0.0,
+        help="Yaw camera left/right in degrees relative to the default view.",
+    )
+    parser.add_argument(
+        "--camera-pitch-deg",
+        type=float,
+        default=0.0,
+        help="Pitch camera up/down in degrees relative to the default view.",
+    )
+    parser.add_argument(
+        "--camera-pan-right",
+        type=float,
+        default=0.0,
+        help="Translate the camera target right in view-relative Plotly scene units.",
+    )
+    parser.add_argument(
+        "--camera-pan-up",
+        type=float,
+        default=0.0,
+        help="Translate the camera target up in view-relative Plotly scene units.",
+    )
+    parser.add_argument(
+        "--camera-pan-forward",
+        type=float,
+        default=0.0,
+        help="Translate the camera target forward along the view direction in Plotly scene units.",
+    )
+    parser.add_argument(
+        "--camera-json",
+        type=str,
+        default=None,
+        help="Raw Plotly camera JSON copied from scripts/render_path_opt.py's HTML panel.",
+    )
+    parser.add_argument(
+        "--camera-json-file",
+        type=Path,
+        default=None,
+        help="Path to raw Plotly camera JSON copied from scripts/render_path_opt.py's HTML panel.",
+    )
     parser.add_argument("--terrain-res", type=int, default=240)
     parser.add_argument("--video-filename", type=str, default="path_opt_animation.mp4")
     parser.add_argument("--show-markers", action="store_true", help="Show start and goal markers.")
+    parser.add_argument(
+        "--gradients",
+        choices=("fd", "autograd"),
+        default="fd",
+        help="Terrain slope source: finite differences ('fd') or PyTorch autograd.",
+    )
     parser.add_argument(
         "--no-serve", action="store_true", help="Do not start an HTTP preview server."
     )
@@ -382,7 +553,7 @@ def main() -> None:
     nemo = Nemo.load_checkpoint(args.checkpoint.expanduser(), map_location=device).to(device)
 
     start_xy = np.array([0.0, 0.0], dtype=np.float64)
-    goal_xy = np.array([430.0, 330.0], dtype=np.float64)
+    goal_xy = np.array([1000.0, 330.0], dtype=np.float64)
     start_airsim = ground_airsim(nemo, start_xy)
     goal_airsim = ground_airsim(nemo, goal_xy)
     start_ds = airsim_to_dataset(start_airsim)
@@ -393,7 +564,8 @@ def main() -> None:
         goal_xy=(float(goal_ds[0]), float(goal_ds[1])),
     )
     astar_airsim = dataset_to_airsim_path(path_xyz(nemo, astar_xy))
-    cfg = build_planner_config()
+    gradient_mode = "finite_difference" if args.gradients == "fd" else "autograd"
+    cfg = build_planner_config(gradient_mode=gradient_mode)
     if args.num_iters is not None:
         cfg = TerrainAwarePlannerConfig(**{**asdict(cfg), "num_iters": int(args.num_iters)})
 
@@ -415,6 +587,18 @@ def main() -> None:
         scale=float(args.scale),
         show_markers=bool(args.show_markers),
         eye_distance=float(args.eye_distance),
+        camera_yaw_deg=float(args.camera_yaw_deg),
+        camera_pitch_deg=float(args.camera_pitch_deg),
+        camera_pan_right=float(args.camera_pan_right),
+        camera_pan_up=float(args.camera_pan_up),
+        camera_pan_forward=float(args.camera_pan_forward),
+        camera_json=(
+            str(args.camera_json_file.expanduser().resolve())
+            if args.camera_json_file is not None
+            else args.camera_json
+        ),
+        astar_line_width=float(args.astar_line_width),
+        optimized_line_width=float(args.optimized_line_width),
     )
 
     vehicle = VehicleModelConfig(
@@ -446,7 +630,23 @@ def main() -> None:
         "start_airsim": start_airsim.tolist(),
         "goal_airsim": goal_airsim.tolist(),
         "frame_every": int(args.frame_every),
-        "eye_distance": float(args.eye_distance),
+        "astar_line_width": float(args.astar_line_width),
+        "optimized_line_width": float(args.optimized_line_width),
+        "video_crf": float(args.video_crf),
+        "video_encoded_format": str(args.video_encoded_format),
+        "camera": {
+            "eye_distance": float(args.eye_distance),
+            "yaw_deg": float(args.camera_yaw_deg),
+            "pitch_deg": float(args.camera_pitch_deg),
+            "pan_right": float(args.camera_pan_right),
+            "pan_up": float(args.camera_pan_up),
+            "pan_forward": float(args.camera_pan_forward),
+            "json": (
+                str(args.camera_json_file.expanduser().resolve())
+                if args.camera_json_file is not None
+                else args.camera_json
+            ),
+        },
         "num_frames": int(result["num_frames"]),
         "metrics": metrics,
         "cost_history": result["cost_history"],
@@ -475,7 +675,12 @@ def main() -> None:
     video_path = output_dir / args.video_filename
     first_frame = np.asarray(media.read_image(frame_paths[0]))[..., :3]
     with media.VideoWriter(
-        path=video_path, shape=first_frame.shape[:2], fps=int(args.fps), codec="h264"
+        path=video_path,
+        shape=first_frame.shape[:2],
+        fps=int(args.fps),
+        codec="h264",
+        crf=float(args.video_crf),
+        encoded_format=str(args.video_encoded_format),
     ) as writer:
         writer.add_image(first_frame)
         for frame_path in frame_paths[1:]:

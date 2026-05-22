@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from typing import Literal
 
 import numpy as np
 import torch
@@ -35,7 +36,8 @@ class TerrainAwarePlannerConfig:
     w_crosstrack: float = 0.25
     w_throttle: float = 0.25
     w_steering: float = 0.25
-    w_smoothness: float = 0.0
+    w_smoothness: float = 0.01
+    gradient_mode: Literal["finite_difference", "autograd"] = "finite_difference"
     finite_difference_eps: float | None = None
     bounds_margin: float = 0.0
     normalize_costs: bool = True
@@ -85,6 +87,7 @@ def optimize_terrain_aware_path(
     nemo: Any,
     initial_path_xy: np.ndarray,
     config: TerrainAwarePlannerConfig | None = None,
+    initial_control_points: np.ndarray | None = None,
 ) -> TerrainAwarePlanResult:
     """Optimize a smooth 2D spline path over a NEMo height field.
 
@@ -97,7 +100,14 @@ def optimize_terrain_aware_path(
     """
     cfg = config or TerrainAwarePlannerConfig()
     seed = validate_path(initial_path_xy)
-    controls_np = initialize_control_points(seed, cfg.num_control_points)
+    if initial_control_points is None:
+        controls_np = initialize_control_points(seed, cfg.num_control_points)
+    else:
+        controls_np = validate_path(initial_control_points)
+        if controls_np.shape[0] < 2:
+            raise ValueError("Expected at least two initial control points.")
+        controls_np[0] = seed[0]
+        controls_np[-1] = seed[-1]
     basis_np = bspline_basis(
         num_control_points=controls_np.shape[0],
         num_samples=max(int(cfg.num_samples), 2),
@@ -152,7 +162,9 @@ def optimize_terrain_aware_path(
             if candidate_value < best_total:
                 best_total = candidate_value
                 best_interior = interior.detach().clone()
-                best_terms = {**{name: value.detach().clone() for name, value in candidate_raw.items()}}
+                best_terms = {
+                    **{name: value.detach().clone() for name, value in candidate_raw.items()}
+                }
                 best_terms["total"] = candidate_total.detach().clone()
         history.append(candidate_value)
         if cfg.verbose:
@@ -222,7 +234,9 @@ def bspline_basis(num_control_points: int, num_samples: int, degree: int = 3) ->
     knots[degree : num_control_points + 1] = np.linspace(0.0, 1.0, num_control_points - degree + 1)
     knots[num_control_points + 1 :] = 1.0
     u = np.linspace(0.0, 1.0, int(num_samples), dtype=np.float64)
-    basis = np.column_stack([_basis_function(i, degree, u, knots) for i in range(num_control_points)])
+    basis = np.column_stack(
+        [_basis_function(i, degree, u, knots) for i in range(num_control_points)]
+    )
     basis[0, :] = 0.0
     basis[0, 0] = 1.0
     basis[-1, :] = 0.0
@@ -239,7 +253,9 @@ def sample_path(control_points: torch.Tensor, basis: torch.Tensor) -> torch.Tens
     return path
 
 
-def finite_difference_grad(nemo: Any, xy: torch.Tensor, config: TerrainAwarePlannerConfig) -> torch.Tensor:
+def finite_difference_grad(
+    nemo: Any, xy: torch.Tensor, config: TerrainAwarePlannerConfig
+) -> torch.Tensor:
     if config.finite_difference_eps is None:
         x_range = float(nemo.field.bounds[0][1] - nemo.field.bounds[0][0])
         y_range = float(nemo.field.bounds[1][1] - nemo.field.bounds[1][0])
@@ -253,10 +269,39 @@ def finite_difference_grad(nemo: Any, xy: torch.Tensor, config: TerrainAwarePlan
     return torch.stack([gx, gy], dim=-1)
 
 
-def trajectory_from_path(nemo: Any, path_xy: torch.Tensor, config: TerrainAwarePlannerConfig) -> dict[str, torch.Tensor]:
+def autograd_grad(nemo: Any, xy: torch.Tensor) -> torch.Tensor:
+    """Return dh/dx, dh/dy while keeping gradients connected to the path tensor."""
+    with torch.enable_grad():
+        create_graph = bool(xy.requires_grad)
+        if create_graph:
+            xy_query = xy
+        else:
+            xy_query = xy.clone().detach().requires_grad_(True)
+        z = nemo.field.h(xy_query).squeeze(-1)
+        return torch.autograd.grad(
+            outputs=z.sum(),
+            inputs=xy_query,
+            create_graph=create_graph,
+        )[0]
+
+
+def terrain_grad(nemo: Any, xy: torch.Tensor, config: TerrainAwarePlannerConfig) -> torch.Tensor:
+    if config.gradient_mode == "finite_difference":
+        return finite_difference_grad(nemo, xy, config)
+    if config.gradient_mode == "autograd":
+        return autograd_grad(nemo, xy)
+    raise ValueError(
+        "Unsupported terrain gradient mode "
+        f"{config.gradient_mode!r}; expected 'finite_difference' or 'autograd'."
+    )
+
+
+def trajectory_from_path(
+    nemo: Any, path_xy: torch.Tensor, config: TerrainAwarePlannerConfig
+) -> dict[str, torch.Tensor]:
     """Build a differentiable terrain-aware trajectory dictionary."""
     z = nemo.field.h(path_xy).squeeze(-1)
-    grad = finite_difference_grad(nemo, path_xy, config)
+    grad = terrain_grad(nemo, path_xy, config)
 
     deriv = _gradient_by_index(path_xy)
     second = _gradient_by_index(deriv)
@@ -341,7 +386,10 @@ def compute_raw_costs(
 
     throttle_cost = throttle.pow(2).mean() + torch.relu(torch.abs(throttle) - 1.0).pow(2).mean()
     steering_cost = steering.div(steering_limit).pow(2).mean()
-    steering_cost = steering_cost + torch.relu(torch.abs(steering) - steering_limit).pow(2).div(steering_limit**2).mean()
+    steering_cost = (
+        steering_cost
+        + torch.relu(torch.abs(steering) - steering_limit).pow(2).div(steering_limit**2).mean()
+    )
 
     path_xy = trajectory["path_xy"]
     path_second = path_xy[2:] - 2.0 * path_xy[1:-1] + path_xy[:-2]
@@ -410,7 +458,9 @@ def path_xyz(nemo: Any, path_xy: np.ndarray) -> np.ndarray:
     return np.column_stack([path_xy, z]).astype(np.float32)
 
 
-def _cost_normalizers(raw_costs: dict[str, torch.Tensor], *, enabled: bool) -> dict[str, torch.Tensor]:
+def _cost_normalizers(
+    raw_costs: dict[str, torch.Tensor], *, enabled: bool
+) -> dict[str, torch.Tensor]:
     normalizers: dict[str, torch.Tensor] = {}
     for name, value in raw_costs.items():
         if enabled:
@@ -479,7 +529,9 @@ def _basis_function(i: int, degree: int, u: np.ndarray, knots: np.ndarray) -> np
     if left_den > 0.0:
         left = ((u - knots[i]) / left_den) * _basis_function(i, degree - 1, u, knots)
     if right_den > 0.0:
-        right = ((knots[i + degree + 1] - u) / right_den) * _basis_function(i + 1, degree - 1, u, knots)
+        right = ((knots[i + degree + 1] - u) / right_den) * _basis_function(
+            i + 1, degree - 1, u, knots
+        )
     return left + right
 
 
@@ -520,8 +572,8 @@ def _main() -> None:
         w_downhill=0.80,
         w_crosstrack=0.10,
         w_throttle=0.35,
-        w_steering=0.01,
-        w_smoothness=0.0,
+        w_steering=0.1,
+        w_smoothness=0.01,
         verbose=True,
     )
     result = optimize_terrain_aware_path(nemo, initial, cfg)
